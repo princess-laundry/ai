@@ -1,0 +1,9 @@
+# PC 분석 환경. mediapipe는 Android tasks-vision 0.10.21과 같은 버전으로 고정합니다.
+mediapipe==0.10.21
+opencv-python>=4.9,<5
+numpy>=1.26,<2.3
+pandas>=2.2,<3
+scikit-learn>=1.5
+skl2onnx>=1.17
+onnxruntime>=1.18
+pytest>=8

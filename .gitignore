@@ -1,0 +1,18 @@
+# 실험 영상·라벨·랜드마크 원본은 개인정보라 git에 올리지 않습니다(팀 PC에만 보관, 종료 시 삭제).
+data/
+outputs/
+models/*.task
+
+# Python
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# Kotlin / Gradle
+kotlin/.gradle/
+kotlin/build/
+.kotlin/
+.idea/
+*.iml
+local.properties
