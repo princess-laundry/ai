@@ -54,6 +54,23 @@
     - 따로 "2초 동안 계속 유지되기를 기다리는" 단계는 없습니다.
 11. **단일 상태 (서버 enum):** head가 참이면 `FHP`(동시 발생도 FHP 우선), lean만 참이면 `LEAN`, 둘 다 아니면 `NORMAL`. 두 속성은 `PoseFeedback.headForward` / `torsoLean`으로도 따로 내보냅니다.
 
+## 개인 캘리브레이션 (선택)
+
+| 구현 | 파일 |
+|---|---|
+| Python | `python/src/posture_ai/calibration.py` |
+| Kotlin | `kotlin/src/main/kotlin/com/sidefocus/core/PostureCalibration.kt` |
+
+1. **수집:** 캘리브레이션 없이 만든 판정기의 출력(스무딩된 `headRatio`, `torsoAngle`)을 프레임마다 수집기에 넣어요. 첫 프레임부터 **5초**가 지나면 아래 순서로 확인해요.
+   - 유효 프레임(특징값 있음, 재세팅 아님)이 5개 미만이거나 80% 미만 → `NOT_VISIBLE`
+   - 머리 비율 표준편차(모집단) > 0.05 또는 몸통 > 4° → `MOVING`
+   - 기준 = 두 값 각각의 위쪽 중앙값
+   - 기준 머리 비율 > T₁ + T₁Δ 또는 기준 몸통 > T₂ + T₂Δ → `NOT_UPRIGHT`. 절대 임계값만으로 막으면 평소 자세가 기준선 근처인 사람은 캘리브레이션을 못 해서 Δ만큼 여유를 둬요.
+   - 그 외 → `DONE`. 이후 결과는 고정돼요.
+2. **판정:** 판정기를 기준과 함께 만들면 9번 프레임 판정이 이렇게 바뀌어요. 나머지 단계는 같아요.
+   `head = headRatio − 기준.headRatio > T₁Δ`, `lean = torsoAngle − 기준.torsoAngle > T₂Δ`
+3. **저장:** 기준은 백엔드 `user_settings.calib_ratio` / `calib_angle`에 대응해요. Δ 임계값은 `Thresholds.headDelta` / `leanDeltaDegrees`(서버 `t1_delta` / `t2_delta`, 아직 서버에 컬럼 없음)이고, 기본값 0.15 / 12°는 실험 전 임시값이에요.
+
 ## 상수
 
 | 이름 | 값 | 비고 |

@@ -12,6 +12,7 @@ AI 파트 결과물을 앱과 서버에 붙이는 방법이에요. **ai 저장�
 |---|---|
 | `kotlin/src/main/kotlin/com/sidefocus/core/PostureEstimator.kt` | `core/src/main/kotlin/com/sidefocus/core/PostureEstimator.kt` (덮어쓰기) |
 | `kotlin/src/main/kotlin/com/sidefocus/core/PostureFeatures.kt` | 같은 폴더에 새로 추가 |
+| `kotlin/src/main/kotlin/com/sidefocus/core/PostureCalibration.kt` | 같은 폴더에 새로 추가 (개인 캘리브레이션) |
 | `kotlin/src/test/kotlin/com/sidefocus/core/PostureEstimatorTest.kt` | `core/src/test/.../PostureEstimatorTest.kt` (덮어쓰기) |
 
 - `PostureStub.kt`는 복사하지 마세요. 프론트에는 `Session.kt`에 `Posture`가 이미 있어요.
@@ -53,7 +54,27 @@ val frame = CameraFrame(PoseObservation(now, landmarks != null, side(7, 11, 23),
 - **부호는 기기마다 확인해 주세요.** 폰을 10° 기울인 채 똑바로 앉았을 때 `leanDegrees`가 0 근처로 유지되면 맞아요.
 - 값을 넘기지 않으면 보정하지 않아요(기존과 같음).
 
-### 5. 임계값
+### 5. 개인 캘리브레이션 (확장 기능, 선택)
+
+사람마다 평소 앉는 자세가 달라서, 절대 기준만 쓰면 원래 머리가 앞에 있는 사람은 계속 경고를 받아요. 시작할 때 바른 자세로 5초 앉으면 그 자세를 기준으로 판정해요. 합성 데이터에서는 정확도가 81.7%에서 88.0%로 올랐지만 실측은 아니에요.
+
+```kotlin
+// 세팅 화면에서 카운트다운이 끝난 뒤(또는 설정의 '기준 자세 다시 재기')
+val collector = CalibrationCollector(sessionThresholds)
+// 프레임마다: 캘리브레이션 없는 판정기의 결과를 넣음
+val result = collector.add(lastFrameAt, feedback)
+if (result.status == CalibrationStatus.PENDING) showProgress(result.progress, result.status.message)
+else if (result.status == CalibrationStatus.DONE) {
+    preferences.saveCalibration(result.calibration!!)                  // Calibration은 @Serializable
+    estimator = PostureEstimator(sessionThresholds, result.calibration) // 이후 판정은 개인 기준
+} else showRetry(result.status.message)                                // NOT_VISIBLE / MOVING / NOT_UPRIGHT
+```
+
+- 저장한 기준은 다음 세션에도 쓸 수 있어요. 다만 폰 위치나 의자가 바뀌면 다시 재는 게 좋아요(재세팅 안내가 뜰 때 함께).
+- `PoseFeedback.calibrated`로 개인 기준 판정 중인지 화면에 표시할 수 있어요.
+- 캘리브레이션을 안 하면 지금처럼 절대 임계값으로 판정해요.
+
+### 6. 임계값
 
 새 판정기는 머리 특징의 정의가 달라졌어요. 그래서 실험 데이터로 정한 **v2 임계값**을 서버에 등록한 뒤 교체하는 게 가장 좋아요. 지금 기본값(0.35 / 20°)과 서버 v1(0.25 / 20°)은 둘 다 실험 전 임시값이에요.
 
@@ -73,6 +94,13 @@ val frame = CameraFrame(PoseObservation(now, landmarks != null, side(7, 11, 23),
   ```
 - `POST /admin/configs`가 생기면 같은 JSON(`thresholds.json`)을 그대로 보내면 돼요.
 - 프론트가 새 판정기로 교체하는 시점과 v2 활성화 시점을 맞춰 주세요. 세션마다 `threshold_version`이 저장되니, 버전별로 전후 비교도 할 수 있어요.
+
+### 개인 캘리브레이션 지원 (확장, F8과 연결)
+- **기준값 저장:** `user_settings.calib_ratio` = `Calibration.headRatio`, `calib_angle` = `Calibration.torsoAngle`. 테이블은 이미 있어요. 기획서의 `GET/PUT /users/me/settings`가 구현되면 앱이 백업·복원할 수 있어요.
+- **Δ 임계값 (요청):** 캘리브레이션했을 때 쓰는 임계값 `t1_delta`, `t2_delta`를 `threshold_configs`에 nullable REAL 컬럼으로 추가하고 `/config` 응답에 넣어 주세요(V3 마이그레이션). 값이 없으면 앱은 기본값(0.15 / 12°)을 써요. `analyze`가 만드는 `thresholds.json`에 이 두 값이 들어 있어요.
+  ```sql
+  ALTER TABLE threshold_configs ADD COLUMN t1_delta REAL, ADD COLUMN t2_delta REAL;
+  ```
 
 ---
 
