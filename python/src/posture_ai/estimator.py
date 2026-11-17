@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from .features import (
     BodySide,
@@ -20,6 +20,9 @@ from .features import (
     select_side,
     upper_median,
 )
+
+if TYPE_CHECKING:
+    from .calibration import Calibration
 
 NORMAL, FHP, LEAN, AWAY, UNKNOWN = "NORMAL", "FHP", "LEAN", "AWAY", "UNKNOWN"
 
@@ -40,11 +43,17 @@ class Thresholds:
     lean_degrees: float = 20.0
     stable_ms: int = 2000
     analysis_fps: int = 5
+    head_delta: float = 0.15
+    """캘리브레이션했을 때: 기준 자세 대비 머리 비율 증가량 임계값(실험 전 임시값)."""
+    lean_delta_degrees: float = 12.0
+    """캘리브레이션했을 때: 기준 자세 대비 몸통 각도 증가량 임계값(실험 전 임시값)."""
 
     def __post_init__(self) -> None:
         if not (self.version > 0 and 0.05 <= self.head_ratio <= 2.0 and 1.0 <= self.lean_degrees <= 89.0):
             raise ValueError("invalid thresholds")
         if not (200 <= self.stable_ms <= 10_000 and 1 <= self.analysis_fps <= 10):
+            raise ValueError("invalid thresholds")
+        if not (0.01 <= self.head_delta <= 2.0 and 1.0 <= self.lean_delta_degrees <= 89.0):
             raise ValueError("invalid thresholds")
 
     @classmethod
@@ -56,6 +65,8 @@ class Thresholds:
             lean_degrees=float(config["t2_angle"]),
             stable_ms=int(round(float(config["stable_sec"]) * 1000)),
             analysis_fps=int(config["analysis_fps"]),
+            head_delta=float(config.get("t1_delta") or cls.head_delta),
+            lean_delta_degrees=float(config.get("t2_delta") or cls.lean_delta_degrees),
         )
 
 
@@ -80,6 +91,7 @@ class Feedback:
     head_forward: Optional[bool] = None
     torso_lean: Optional[bool] = None
     facing: int = 0
+    calibrated: bool = False
 
     @property
     def framed(self) -> bool:
@@ -89,6 +101,8 @@ class Feedback:
 @dataclass
 class PostureEstimator:
     thresholds: Thresholds = field(default_factory=Thresholds)
+    calibration: Optional["Calibration"] = None
+    """있으면 개인 기준 대비(Δ) 임계값으로, 없으면 절대 임계값으로 판정합니다."""
 
     def __post_init__(self) -> None:
         self.current = UNKNOWN
@@ -183,8 +197,13 @@ class PostureEstimator:
             self._clear_tracking()
             return Feedback(state=UNKNOWN, body=body, needs_reset=True, facing=facing)
 
-        head = ratio > t.head_ratio
-        lean = angle > t.lean_degrees
+        c = self.calibration
+        if c is not None:
+            head = ratio - c.head_ratio > t.head_delta
+            lean = angle - c.torso_angle > t.lean_delta_degrees
+        else:
+            head = ratio > t.head_ratio
+            lean = angle > t.lean_degrees
         if self._window_start is None:
             self._window_start = obs.timestamp_ms
         self._window.append((obs.timestamp_ms, head, lean))
@@ -206,4 +225,5 @@ class PostureEstimator:
             head_forward=self._head,
             torso_lean=self._lean,
             facing=facing,
+            calibrated=self.calibration is not None,
         )

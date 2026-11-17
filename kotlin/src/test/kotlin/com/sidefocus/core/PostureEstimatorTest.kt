@@ -122,6 +122,36 @@ class PostureEstimatorTest {
         assertEquals(10.0, result.leanDegrees!!, 1e-6)
     }
 
+    @Test fun `calibration makes a habitually slouched person read as normal`() {
+        val usual = body(headRatio = 0.40, torsoDeg = 22.0)   // 이 사람의 평소 바른 자세
+        assertEquals(Posture.FHP, run(PostureEstimator(), 0, 3000, usual).state)  // 절대 기준이면 계속 경고
+
+        val collector = CalibrationCollector()
+        val estimator = PostureEstimator()
+        var result = CalibrationResult()
+        for (time in 0L..5000L step 200) result = collector.add(time, estimator.update(observe(time, usual)))
+        assertEquals(CalibrationStatus.DONE, result.status)
+
+        val calibrated = PostureEstimator(Thresholds(), result.calibration)
+        val normal = run(calibrated, 0, 3000, usual)
+        assertEquals(Posture.NORMAL, normal.state)
+        assertTrue(normal.calibrated)
+        assertEquals(Posture.FHP, run(calibrated, 3200, 6000, body(headRatio = 0.60, torsoDeg = 22.0)).state)
+    }
+
+    @Test fun `calibration rejects moving, hidden, and clearly slouched starts`() {
+        fun calibrate(frame: (Long) -> PoseObservation): CalibrationStatus {
+            val collector = CalibrationCollector()
+            val estimator = PostureEstimator()
+            var result = CalibrationResult()
+            for (time in 0L..5000L step 200) result = collector.add(time, estimator.update(frame(time)))
+            return result.status
+        }
+        assertEquals(CalibrationStatus.MOVING, calibrate { t -> observe(t, body(torsoDeg = if (t / 1000 % 2 == 0L) 0.0 else 25.0)) })
+        assertEquals(CalibrationStatus.NOT_VISIBLE, calibrate { t -> PoseObservation(t, false) })
+        assertEquals(CalibrationStatus.NOT_UPRIGHT, calibrate { t -> observe(t, body(headRatio = 0.7)) })
+    }
+
     @Test fun `nonfinite landmarks cannot pass the setup gate`() {
         val estimator = PostureEstimator()
         val invalid = BodySide(Point(Double.NaN, 10.0), Point(20.0, 30.0), Point(20.0, 100.0))

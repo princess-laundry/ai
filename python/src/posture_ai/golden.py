@@ -16,11 +16,13 @@ from typing import Iterable, Optional
 import numpy as np
 
 from . import synthetic
+from .calibration import Calibration, CalibrationCollector
 from .estimator import Observation, PostureEstimator, Thresholds
 from .features import BodySide, Point
 from .landmarks import observations
 
-THRESHOLDS = Thresholds(version=1, head_ratio=0.2, lean_degrees=15.0, stable_ms=2000, analysis_fps=5)
+THRESHOLDS = Thresholds(version=1, head_ratio=0.2, lean_degrees=15.0, stable_ms=2000, analysis_fps=5,
+                        head_delta=0.12, lean_delta_degrees=10.0)
 
 
 def _f32(value: float) -> float:
@@ -63,8 +65,14 @@ def _num(v: Optional[float]):
     return None if v is None else float(v)
 
 
-def case(name: str, frames: Iterable[Observation], thresholds: Thresholds = THRESHOLDS) -> dict:
-    est = PostureEstimator(thresholds)
+def _thresholds_json(t: Thresholds) -> dict:
+    return {"version": t.version, "headRatio": t.head_ratio, "leanDegrees": t.lean_degrees, "stableMs": t.stable_ms,
+            "analysisFps": t.analysis_fps, "headDelta": t.head_delta, "leanDeltaDegrees": t.lean_delta_degrees}
+
+
+def case(name: str, frames: Iterable[Observation], thresholds: Thresholds = THRESHOLDS,
+         calibration: Optional[Calibration] = None) -> dict:
+    est = PostureEstimator(thresholds, calibration)
     inputs, expected = [], []
     for obs in frames:
         obs = _normalize(obs)
@@ -73,16 +81,32 @@ def case(name: str, frames: Iterable[Observation], thresholds: Thresholds = THRE
         expected.append({
             "state": fb.state, "needsReset": fb.needs_reset, "framed": fb.framed, "facing": fb.facing,
             "headRatio": _num(fb.head_ratio), "torsoAngle": _num(fb.torso_angle), "neckAngle": _num(fb.neck_angle),
-            "headForward": fb.head_forward, "torsoLean": fb.torso_lean,
+            "headForward": fb.head_forward, "torsoLean": fb.torso_lean, "calibrated": fb.calibrated,
         })
     return {
         "name": name,
-        "thresholds": {"version": thresholds.version, "headRatio": thresholds.head_ratio,
-                       "leanDegrees": thresholds.lean_degrees, "stableMs": thresholds.stable_ms,
-                       "analysisFps": thresholds.analysis_fps},
+        "thresholds": _thresholds_json(thresholds),
+        "calibration": None if calibration is None else {"headRatio": calibration.head_ratio,
+                                                         "torsoAngle": calibration.torso_angle},
         "frames": inputs,
         "expected": expected,
     }
+
+
+def collector_case(name: str, frames: Iterable[Observation], thresholds: Thresholds = THRESHOLDS) -> dict:
+    """캘리브레이션 수집기: 판정기(캘리브레이션 없이) 출력을 프레임마다 넣었을 때의 결과."""
+    est = PostureEstimator(thresholds)
+    collector = CalibrationCollector(thresholds)
+    inputs, expected = [], []
+    for obs in frames:
+        obs = _normalize(obs)
+        result = collector.add(obs.timestamp_ms, est.update(obs))
+        inputs.append(_frame_json(obs))
+        c = result.calibration
+        expected.append({"status": result.status, "progress": result.progress,
+                         "headRatio": None if c is None else c.head_ratio,
+                         "torsoAngle": None if c is None else c.torso_angle})
+    return {"name": name, "thresholds": _thresholds_json(thresholds), "frames": inputs, "expected": expected}
 
 
 def _edge_frames() -> list[Observation]:
@@ -115,13 +139,49 @@ def build_cases() -> list[dict]:
         case("collection_left_facing_without_nose", no_nose),
         case("scenario_150s", observations(synthetic.generate(right_facing, synthetic.script_intervals(synthetic.SCENARIO_150S), seed=6))),
         case("edge_away_occlusion_reset", _edge_frames()),
+        _calibrated_case(),
     ]
+
+
+def _calibrated_case() -> dict:
+    """평소에도 머리가 앞에 있고 몸통이 숙여진 사람: 절대 임계값이면 늘 이상 자세로 보이지만 개인 기준으로는 바른 자세."""
+    subject = synthetic.Subject("slouch", head_neutral=0.24, torso_neutral=17.0, head_shift=0.22, lean_shift=16.0,
+                                facing=-1, noise_px=1.2, dropout=0.0)
+    script = synthetic.script_intervals(synthetic.COLLECTION_SCRIPT)
+    frames = list(observations(synthetic.generate(subject, script, seed=8)))
+    est, collector = PostureEstimator(THRESHOLDS), CalibrationCollector(THRESHOLDS)
+    result = None
+    for o in frames:  # 첫 바른 자세 구간(0~20초)의 1초 뒤부터 5초 캘리브레이션
+        fb = est.update(_normalize(o))
+        if o.timestamp_ms >= 1000:
+            result = collector.add(o.timestamp_ms, fb)
+            if result.finished:
+                break
+    assert result is not None and result.status == "DONE", result
+    return case("calibrated_slouching_subject", frames, calibration=result.calibration)
+
+
+def build_collector_cases() -> dict:
+    subject = synthetic.Subject("calib", facing=1, noise_px=1.0, dropout=0.0)
+
+    def run(script, seed):
+        return list(observations(synthetic.generate(subject, synthetic.script_intervals(script), seed=seed)))
+
+    return {
+        "name": "calibration_collector",
+        "cases": [
+            collector_case("done", run([("NORMAL", 8)], 21)),
+            collector_case("moving", run([("NORMAL", 1.6), ("LEAN", 1.6), ("NORMAL", 1.6), ("LEAN", 1.6), ("NORMAL", 2)], 22)),
+            collector_case("not_upright", run([("FHP", 8)], 23)),
+            collector_case("not_visible", run([("AWAY", 8)], 24)),
+        ],
+    }
 
 
 def write(out_dir: Path) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = []
-    for c in build_cases():
+    for c in build_cases() + [build_collector_cases()]:
         path = out_dir / f"{c['name']}.json"
         path.write_text(json.dumps(c, separators=(",", ":")) + "\n", encoding="utf-8", newline="\n")
         paths.append(path)

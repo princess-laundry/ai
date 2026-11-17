@@ -9,6 +9,7 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import cohen_kappa_score, confusion_matrix, f1_score, recall_score
 
+from .calibration import DONE, NOT_VISIBLE, CalibrationCollector, CalibrationResult
 from .estimator import FHP, LEAN, NORMAL, AWAY, PostureEstimator, Thresholds
 from .labels import Interval, label_at
 from .landmarks import observations
@@ -77,6 +78,7 @@ class AppSimulation:
     miss_rate: float
     latency_median_s: float
     latency_p95_s: float
+    calibration_failures: int = 0
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -86,8 +88,29 @@ def _expected_state(interval: Interval) -> str:
     return interval.posture  # 둘 다면 FHP 우선
 
 
-def simulate_app(runs: Iterable[tuple[Recording, Thresholds]]) -> AppSimulation:
+def calibrate_recording(rec: Recording, thresholds: Thresholds) -> CalibrationResult:
+    """앱처럼 5초 캘리브레이션을 합니다. 시작점은 첫 바른 자세 구간 시작 1초 뒤(진행자가 '바르게 앉기'를 안내한 상황)."""
+    start = next((i.start_s + 1.0 for i in sorted(rec.labels, key=lambda i: i.start_s)
+                  if i.combo == "NORMAL" and not i.exclude), None)
+    if start is None:
+        return CalibrationResult(NOT_VISIBLE, 1.0)
+    est = PostureEstimator(thresholds)
+    collector = CalibrationCollector(thresholds)
+    result = CalibrationResult()
+    for obs in observations(rec.landmarks):
+        fb = est.update(obs)
+        if obs.timestamp_ms / 1000.0 >= start:
+            result = collector.add(obs.timestamp_ms, fb)
+            if result.finished:
+                break
+    return result if result.finished else CalibrationResult(NOT_VISIBLE, 1.0)
+
+
+def simulate_app(runs: Iterable[tuple[Recording, Thresholds]], calibrate: bool = False) -> AppSimulation:
     """녹화마다 (녹화, 적용할 임계값)으로 앱과 같은 판정기를 돌립니다.
+
+    calibrate=True면 녹화마다 5초 캘리브레이션을 먼저 하고 Δ 임계값으로 판정합니다.
+    캘리브레이션이 실패하면 앱과 같이 절대 임계값으로 돌아가고 calibration_failures에 셉니다.
 
     오탐 = 상태가 FHP/LEAN으로 바뀌었는데 그 시각의 정답이 그 상태가 아닌 경우.
     미탐 = 안정화 시간+1초 이상 이어진 이상 자세 구간에서 끝난 뒤 1초까지 한 번도 해당 상태가 안 나온 경우.
@@ -96,9 +119,15 @@ def simulate_app(runs: Iterable[tuple[Recording, Thresholds]]) -> AppSimulation:
     correct = total = alerts = false_alerts = events = missed = 0
     labeled_s = 0.0
     latencies: list[float] = []
+    failures = 0
     for rec, thresholds in runs:
         stable_s = thresholds.stable_ms / 1000.0
-        est = PostureEstimator(thresholds)
+        calibration = None
+        if calibrate:
+            result = calibrate_recording(rec, thresholds)
+            calibration = result.calibration if result.status == DONE else None
+            failures += int(calibration is None)
+        est = PostureEstimator(thresholds, calibration)
         states: list[tuple[float, str]] = []
         previous = None
         for obs in observations(rec.landmarks):
@@ -140,4 +169,5 @@ def simulate_app(runs: Iterable[tuple[Recording, Thresholds]]) -> AppSimulation:
         miss_rate=missed / events if events else float("nan"),
         latency_median_s=float(np.median(latencies)) if latencies else float("nan"),
         latency_p95_s=float(np.percentile(latencies, 95)) if latencies else float("nan"),
+        calibration_failures=failures,
     )

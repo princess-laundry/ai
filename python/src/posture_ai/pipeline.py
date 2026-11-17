@@ -6,7 +6,6 @@
 from __future__ import annotations
 
 import json
-from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -59,18 +58,20 @@ def analyze(recordings: list[Recording], out_dir: Path, *, synthetic: bool, vers
 
     # 앱에 실제로 들어가는 것: 절대 임계값(캘리브레이션 없이 동작). 전체 데이터로 다시 고릅니다.
     final = tune.fit(samples, "abs")
-    thresholds = Thresholds(version=version, head_ratio=max(0.05, final.head), lean_degrees=max(1.0, final.lean))
+    final_delta = tune.fit(samples, "delta")
+    thresholds = _thresholds(version, final, final_delta)
     export.write_thresholds(thresholds, out_dir, "합성 데이터로 고른 값입니다. 서버에 실행하지 마세요." if synthetic else "")
 
     # 앱 시뮬레이션: 피험자별로 '그 사람을 뺀 나머지'로 고른 임계값을 적용(새 사람 기준).
     runs = []
     for subject in sorted({r.subject for r in recordings}):
         others = samples[samples["subject"] != subject]
-        pair = tune.fit(others, "abs") if not others.empty else final
-        t = replace(thresholds, head_ratio=max(0.05, pair.head), lean_degrees=max(1.0, pair.lean))
+        t = thresholds if others.empty else _thresholds(version, tune.fit(others, "abs"), tune.fit(others, "delta"))
         runs += [(r, t) for r in recordings if r.subject == subject]
     sim = simulate_app(runs)
-    (out_dir / "app_simulation.json").write_text(json.dumps(sim.as_dict(), indent=2) + "\n", encoding="utf-8")
+    sim_cal = simulate_app(runs, calibrate=True)
+    (out_dir / "app_simulation.json").write_text(
+        json.dumps({"absolute": sim.as_dict(), "calibrated": sim_cal.as_dict()}, indent=2) + "\n", encoding="utf-8")
 
     # 가장 좋은 학습형 모델 → ONNX
     ml = comparison[comparison["method"] != "임계값"].sort_values("mean_f1", ascending=False).iloc[0]
@@ -91,11 +92,17 @@ def analyze(recordings: list[Recording], out_dir: Path, *, synthetic: bool, vers
     base_combo = combo_report(base_data["combo"], combo_of(bh, bl))
     base_combo["confusion"].to_csv(out_dir / "confusion_threshold_abs.csv")
 
-    report = _report(synthetic, samples, counts, comparison, per_subject_tables, thresholds, sim, ml, baseline,
+    report = _report(synthetic, samples, counts, comparison, per_subject_tables, thresholds, sim, sim_cal, ml, baseline,
                      subject_gain, adopt, onnx_info, base_combo, combo, kind, mode)
     (out_dir / "report.md").write_text(report, encoding="utf-8")
     return {"thresholds": export.thresholds_json(thresholds), "comparison": comparison, "simulation": sim,
-            "adopt_ml": adopt, "onnx": onnx_info}
+            "simulation_calibrated": sim_cal, "adopt_ml": adopt, "onnx": onnx_info}
+
+
+def _thresholds(version: int, absolute: "tune.ThresholdPair", delta: "tune.ThresholdPair") -> Thresholds:
+    """튜닝 결과를 Thresholds 허용 범위 안으로 맞춥니다."""
+    return Thresholds(version=version, head_ratio=max(0.05, absolute.head), lean_degrees=max(1.0, absolute.lean),
+                      head_delta=max(0.01, delta.head), lean_delta_degrees=max(1.0, delta.lean))
 
 
 def _row(method: str, mode: str, data: pd.DataFrame, h, l) -> dict:
@@ -104,12 +111,16 @@ def _row(method: str, mode: str, data: pd.DataFrame, h, l) -> dict:
     return {"method": method, "features": mode, "windows": len(data), **scores, "combo_accuracy": accuracy}
 
 
+def _fmt(value) -> str:
+    return f"{value:.3f}" if isinstance(value, float) else str(value)
+
+
 def _subject_gain(candidate: pd.DataFrame, baseline: pd.DataFrame) -> float:
     merged = candidate.merge(baseline, on="subject", suffixes=("", "_base"))
     return float(np.mean(merged["mean_f1"] > merged["mean_f1_base"])) if len(merged) else 0.0
 
 
-def _report(synthetic, samples, counts, comparison, per_subject_tables, thresholds, sim, ml, baseline, subject_gain,
+def _report(synthetic, samples, counts, comparison, per_subject_tables, thresholds, sim, sim_cal, ml, baseline, subject_gain,
             adopt, onnx_info, base_combo, combo, kind, mode) -> str:
     parts = ["# AI 자세 판정 분석 리포트\n"]
     if synthetic:
@@ -129,10 +140,11 @@ def _report(synthetic, samples, counts, comparison, per_subject_tables, threshol
         "", "## 4. 혼동 행렬 (네 자세)\n",
         "**기준선(임계값 · abs)**\n", md_table(base_combo["confusion"].reset_index(names="")), "",
         f"**{kind.upper()} · {mode}**\n", md_table(combo["confusion"].reset_index(names="")), "",
-        "## 5. 앱 시뮬레이션 (임계값 · abs, 앱과 같은 판정기)\n",
-        "피험자마다 '그 사람을 뺀 나머지'로 고른 임계값을 적용했어요(새 사람 기준).\n",
-        "| 지표 | 값 |", "|---|---|",
-        *[f"| {k} | {v:.3f} |" if isinstance(v, float) else f"| {k} | {v} |" for k, v in sim.as_dict().items()], "",
+        "## 5. 앱 시뮬레이션 (앱과 같은 판정기)\n",
+        "피험자마다 '그 사람을 뺀 나머지'로 고른 임계값을 적용했어요(새 사람 기준).",
+        "캘리브레이션 사용: 첫 바른 자세 구간에서 5초 캘리브레이션 → Δ 임계값으로 판정(실패하면 절대 임계값).\n",
+        "| 지표 | 절대 임계값 | 캘리브레이션 사용 |", "|---|---|---|",
+        *[f"| {k} | {_fmt(v)} | {_fmt(sim_cal.as_dict()[k])} |" for k, v in sim.as_dict().items()], "",
         "- 오탐: FHP/LEAN으로 바뀐 순간의 정답이 그 상태가 아님 · 미탐: 이상 자세 구간 동안 한 번도 못 잡음",
         "- 지연: 이상 자세 시작 → 상태 확정까지(2초 안정화 포함). 기기 처리 지연(ms)은 실기기에서 따로 측정해야 해요.\n",
         "## 6. 서버에 등록할 임계값 (전체 데이터로 선택)\n",

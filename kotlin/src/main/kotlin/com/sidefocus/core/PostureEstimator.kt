@@ -9,11 +9,16 @@ data class Thresholds(
     val headRatio: Double = 0.35,
     val leanDegrees: Double = 20.0,
     val stableMs: Long = 2_000,
-    val analysisFps: Int = 5
+    val analysisFps: Int = 5,
+    /** 캘리브레이션했을 때: 기준 자세 대비 머리 비율 증가량 임계값(실험 전 임시값, 서버 t1_delta). */
+    val headDelta: Double = 0.15,
+    /** 캘리브레이션했을 때: 기준 자세 대비 몸통 각도 증가량 임계값(실험 전 임시값, 서버 t2_delta). */
+    val leanDeltaDegrees: Double = 12.0
 ) {
     init {
         require(version > 0 && headRatio in 0.05..2.0 && leanDegrees in 1.0..89.0)
         require(stableMs in 200..10_000 && analysisFps in 1..10)
+        require(headDelta in 0.01..2.0 && leanDeltaDegrees in 1.0..89.0)
     }
 }
 
@@ -54,7 +59,9 @@ data class PoseFeedback(
     /** 몸통 기준 목 각도(도, 보조 특징값). */
     val neckAngle: Double? = null,
     /** +1: 이미지 오른쪽이 앞, −1: 왼쪽이 앞, 0: 아직 모름. */
-    val facing: Int = 0
+    val facing: Int = 0,
+    /** 개인 캘리브레이션 기준으로 판정했는지. */
+    val calibrated: Boolean = false
 ) {
     val framed: Boolean get() = body != null && !needsReset
 }
@@ -66,8 +73,14 @@ data class PoseFeedback(
  * 1. 품질 필터·측면 선택 → 2. 앞쪽 방향 통일(코, 없으면 보이는 쪽, 세션 다수결) → 3. 거치 기울기 보정
  * → 4. 5프레임 중앙값 스무딩 → 5. 특징값 → 6. 머리·몸통 독립 판정
  * → 7. 최근 2초 창에서 70% 이상 일치하면 전환(히스테리시스) → 8. 둘 다면 FHP 우선으로 단일 상태.
+ *
+ * @param calibration 있으면 개인 기준 대비(Δ) 임계값 headDelta·leanDeltaDegrees로, 없으면 절대 임계값으로 판정.
+ *   CalibrationCollector로 만들고, 서버 user_settings의 calib_ratio·calib_angle에 저장할 수 있음.
  */
-class PostureEstimator(private val thresholds: Thresholds = Thresholds()) {
+class PostureEstimator(
+    private val thresholds: Thresholds = Thresholds(),
+    private val calibration: Calibration? = null
+) {
     private var current = Posture.UNKNOWN
     private var missingSince: Long? = null
     private var baselineLength: Double? = null
@@ -129,8 +142,9 @@ class PostureEstimator(private val thresholds: Thresholds = Thresholds()) {
             return PoseFeedback(body = body, needsReset = true, facing = facing, message = "거리가 달라졌어요. 구도를 다시 맞춰 주세요")
         }
 
-        val headNow = ratio > thresholds.headRatio
-        val leanNow = angle > thresholds.leanDegrees
+        val c = calibration
+        val headNow = if (c != null) ratio - c.headRatio > thresholds.headDelta else ratio > thresholds.headRatio
+        val leanNow = if (c != null) angle - c.torsoAngle > thresholds.leanDeltaDegrees else angle > thresholds.leanDegrees
         if (windowStart == null) windowStart = observation.timestampMs
         window.addLast(Triple(observation.timestampMs, headNow, leanNow))
         while (window.isNotEmpty() && window.first().first <= observation.timestampMs - thresholds.stableMs) window.removeFirst()
@@ -153,7 +167,7 @@ class PostureEstimator(private val thresholds: Thresholds = Thresholds()) {
             Posture.AWAY -> "돌아오면 공부 시간을 자동으로 기록해요"
             else -> "자세가 안정될 때까지 잠시 기다려 주세요"
         }
-        return PoseFeedback(current, body, ratio, angle, false, message, head, lean, neck, facing)
+        return PoseFeedback(current, body, ratio, angle, false, message, head, lean, neck, facing, calibration != null)
     }
 
     private fun clearTracking() {

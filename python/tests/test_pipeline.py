@@ -81,10 +81,11 @@ def test_threshold_export_matches_server_config_shape(tmp_path):
     t = Thresholds(version=3, head_ratio=0.2, lean_degrees=17.5)
     export.write_thresholds(t, tmp_path, "note")
     config = json.loads((tmp_path / "thresholds.json").read_text())
-    assert config == {"version": 3, "t1_ratio": 0.2, "t2_angle": 17.5, "stable_sec": 2.0, "analysis_fps": 5}
+    assert config == {"version": 3, "t1_ratio": 0.2, "t2_angle": 17.5, "stable_sec": 2.0, "analysis_fps": 5,
+                      "t1_delta": 0.15, "t2_delta": 12.0}
     assert Thresholds.from_server(config) == t
     sql = (tmp_path / "thresholds.sql").read_text(encoding="utf-8")
-    assert sql.startswith("-- note") and "VALUES (3, 0.2, 17.5, 2.0, 5, false)" in sql
+    assert sql.startswith("-- note") and "t1_delta=0.15" in sql and "VALUES (3, 0.2, 17.5, 2.0, 5, false)" in sql
 
 
 def test_onnx_export_matches_sklearn(tmp_path, small_dataset):

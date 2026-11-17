@@ -29,23 +29,63 @@ class GoldenParityTest {
         assertTrue(abs(expected - actual) <= 1e-6, "$what: expected $expected but was $actual")
     }
 
+    private fun files() = dir.listFiles { f -> f.extension == "json" }?.sortedBy { it.name }.orEmpty()
+    private fun read(file: File) = Json.parseToJsonElement(file.readText()).jsonObject
+
+    private fun thresholds(t: JsonObject): Thresholds {
+        val defaults = Thresholds()
+        return Thresholds(
+            t["version"]!!.jsonPrimitive.int, t["headRatio"]!!.jsonPrimitive.double,
+            t["leanDegrees"]!!.jsonPrimitive.double, t["stableMs"]!!.jsonPrimitive.long, t["analysisFps"]!!.jsonPrimitive.int,
+            t.doubleOrNull("headDelta") ?: defaults.headDelta, t.doubleOrNull("leanDeltaDegrees") ?: defaults.leanDeltaDegrees)
+    }
+
+    private fun observation(f: JsonObject) = PoseObservation(
+        f["t"]!!.jsonPrimitive.long, f["person"]!!.jsonPrimitive.boolean,
+        side(f["left"]), side(f["right"]), point(f["nose"]), f.doubleOrNull("roll"))
+
+    @Test fun `kotlin calibration collector matches python golden outputs`() {
+        val file = File(dir, "calibration_collector.json")
+        if (!file.exists()) { println("golden 파일 없음: ${file.absolutePath} — 건너뜀"); return }
+        val cases = read(file)["cases"]!!.jsonArray
+        assertEquals(4, cases.size)
+        val seen = mutableSetOf<String>()
+        for (element in cases) {
+            val case = element.jsonObject
+            val t = thresholds(case["thresholds"]!!.jsonObject)
+            val estimator = PostureEstimator(t)
+            val collector = CalibrationCollector(t)
+            val expected = case["expected"]!!.jsonArray
+            case["frames"]!!.jsonArray.forEachIndexed { i, frame ->
+                val f = frame.jsonObject
+                val result = collector.add(f["t"]!!.jsonPrimitive.long, estimator.update(observation(f)))
+                val e = expected[i].jsonObject
+                val where = "calibration ${case["name"]!!.jsonPrimitive.content} frame $i"
+                assertEquals(e["status"]!!.jsonPrimitive.content, result.status.name, "$where status")
+                assertClose(e.doubleOrNull("progress"), result.progress, "$where progress")
+                assertClose(e.doubleOrNull("headRatio"), result.calibration?.headRatio, "$where headRatio")
+                assertClose(e.doubleOrNull("torsoAngle"), result.calibration?.torsoAngle, "$where torsoAngle")
+                if (result.finished) seen += result.status.name
+            }
+        }
+        assertEquals(setOf("DONE", "MOVING", "NOT_UPRIGHT", "NOT_VISIBLE"), seen)
+    }
+
     @Test fun `kotlin estimator matches python golden outputs`() {
-        val files = dir.listFiles { f -> f.extension == "json" }?.sortedBy { it.name }.orEmpty()
+        val files = files().filter { it.name != "calibration_collector.json" }
         if (files.isEmpty()) { println("golden 파일 없음: ${dir.absolutePath} — 건너뜀"); return }
         for (file in files) {
-            val root = Json.parseToJsonElement(file.readText()).jsonObject
-            val t = root["thresholds"]!!.jsonObject
-            val estimator = PostureEstimator(Thresholds(
-                t["version"]!!.jsonPrimitive.int, t["headRatio"]!!.jsonPrimitive.double,
-                t["leanDegrees"]!!.jsonPrimitive.double, t["stableMs"]!!.jsonPrimitive.long, t["analysisFps"]!!.jsonPrimitive.int))
+            val root = read(file)
+            val calibration = (root["calibration"] as? JsonObject)?.let {
+                Calibration(it["headRatio"]!!.jsonPrimitive.double, it["torsoAngle"]!!.jsonPrimitive.double)
+            }
+            val estimator = PostureEstimator(thresholds(root["thresholds"]!!.jsonObject), calibration)
             val frames = root["frames"]!!.jsonArray
             val expected = root["expected"]!!.jsonArray
             assertEquals(frames.size, expected.size)
             frames.forEachIndexed { i, element ->
                 val f = element.jsonObject
-                val result = estimator.update(PoseObservation(
-                    f["t"]!!.jsonPrimitive.long, f["person"]!!.jsonPrimitive.boolean,
-                    side(f["left"]), side(f["right"]), point(f["nose"]), f.doubleOrNull("roll")))
+                val result = estimator.update(observation(f))
                 val e = expected[i].jsonObject
                 val where = "${file.name} frame $i (t=${f["t"]})"
                 assertEquals(e["state"]!!.jsonPrimitive.content, result.state.name, "$where state")
@@ -54,6 +94,7 @@ class GoldenParityTest {
                 assertEquals(e["facing"]!!.jsonPrimitive.int, result.facing, "$where facing")
                 assertEquals(e.boolOrNull("headForward"), result.headForward, "$where headForward")
                 assertEquals(e.boolOrNull("torsoLean"), result.torsoLean, "$where torsoLean")
+                assertEquals(e.boolOrNull("calibrated") ?: false, result.calibrated, "$where calibrated")
                 assertClose(e.doubleOrNull("headRatio"), result.headRatio, "$where headRatio")
                 assertClose(e.doubleOrNull("torsoAngle"), result.leanDegrees, "$where torsoAngle")
                 assertClose(e.doubleOrNull("neckAngle"), result.neckAngle, "$where neckAngle")
