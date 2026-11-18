@@ -54,7 +54,7 @@ val frame = CameraFrame(PoseObservation(now, landmarks != null, side(7, 11, 23),
 - **부호는 기기마다 확인해 주세요.** 폰을 10° 기울인 채 똑바로 앉았을 때 `leanDegrees`가 0 근처로 유지되면 맞아요.
 - 값을 넘기지 않으면 보정하지 않아요(기존과 같음).
 
-### 5. 개인 캘리브레이션 (확장 기능, 선택)
+### 5. 개인 캘리브레이션 (넣기로 확정)
 
 사람마다 평소 앉는 자세가 달라서, 절대 기준만 쓰면 원래 머리가 앞에 있는 사람은 계속 경고를 받아요. 시작할 때 바른 자세로 5초 앉으면 그 자세를 기준으로 판정해요. 합성 데이터에서는 정확도가 81.7%에서 88.0%로 올랐지만 실측은 아니에요.
 
@@ -72,7 +72,7 @@ else if (result.status == CalibrationStatus.DONE) {
 
 - 저장한 기준은 다음 세션에도 쓸 수 있어요. 다만 폰 위치나 의자가 바뀌면 다시 재는 게 좋아요(재세팅 안내가 뜰 때 함께).
 - `PoseFeedback.calibrated`로 개인 기준 판정 중인지 화면에 표시할 수 있어요.
-- 캘리브레이션을 안 하면 지금처럼 절대 임계값으로 판정해요.
+- 사용자가 건너뛰거나 계속 실패하면 절대 임계값으로 판정해요.
 
 ### 6. 임계값
 
@@ -95,16 +95,23 @@ else if (result.status == CalibrationStatus.DONE) {
 - `POST /admin/configs`가 생기면 같은 JSON(`thresholds.json`)을 그대로 보내면 돼요.
 - 프론트가 새 판정기로 교체하는 시점과 v2 활성화 시점을 맞춰 주세요. 세션마다 `threshold_version`이 저장되니, 버전별로 전후 비교도 할 수 있어요.
 
-### 개인 캘리브레이션 지원 (확장, F8과 연결)
+### 개인 캘리브레이션 지원 (넣기로 확정, F8과 연결)
 - **기준값 저장:** `user_settings.calib_ratio` = `Calibration.headRatio`, `calib_angle` = `Calibration.torsoAngle`. 테이블은 이미 있어요. 기획서의 `GET/PUT /users/me/settings`가 구현되면 앱이 백업·복원할 수 있어요.
-- **Δ 임계값 (요청):** 캘리브레이션했을 때 쓰는 임계값 `t1_delta`, `t2_delta`를 `threshold_configs`에 nullable REAL 컬럼으로 추가하고 `/config` 응답에 넣어 주세요(V3 마이그레이션). 값이 없으면 앱은 기본값(0.15 / 12°)을 써요. `analyze`가 만드는 `thresholds.json`에 이 두 값이 들어 있어요.
+- **Δ 임계값 (필요):** 캘리브레이션했을 때 쓰는 임계값 `t1_delta`, `t2_delta`를 `threshold_configs`에 nullable REAL 컬럼으로 추가하고 `/config` 응답에 넣어 주세요(V3 마이그레이션). 값이 없으면 앱은 기본값(0.15 / 12°)을 써요. `analyze`가 만드는 `thresholds.json`에 이 두 값이 들어 있어요.
   ```sql
   ALTER TABLE threshold_configs ADD COLUMN t1_delta REAL, ADD COLUMN t2_delta REAL;
   ```
 
 ---
 
-## 확인이 필요한 미정 사항
+## 팀 결정 사항 (2026-11-18 회의)
 
-1. **동시 발생 저장 방식:** 서버 enum에는 상태가 하나만 있어서 BOTH가 FHP로 저장돼요. 리포트에서 "둘 다"를 따로 보여 줄지 팀이 정해 주세요(필요하면 enum에 `BOTH`를 추가하거나 `posture_segments`에 플래그를 추가).
+1. **상태 전환:** 최근 2초 창에서 70% 이상 같은 판정이면 전환해요(발표 13쪽 방식). "2초 연속 유지" 방식은 쓰지 않아요.
+2. **머리 특징:** 부호 있는 값이에요. 머리가 **앞으로** 나왔을 때만 거북목이고, 뒤로 젖히면 음수예요.
+3. **동시 발생 저장:** 지금처럼 `FHP`로 저장해요. 서버 enum은 바꾸지 않아요. 앱 화면에서는 `headForward`·`torsoLean`으로 둘 다 보여 줄 수 있고, 결과보고서에는 "동시 발생은 FHP로 집계"를 한계로 적어요.
+4. **개인 캘리브레이션:** 넣어요. 시작할 때 바른 자세로 5초 앉아서 그 사람 기준으로 판정해요.
+
+## 아직 미정
+
+1. **판정기 교체 시점:** 실험 후 v2 임계값이 나온 뒤에 교체하는 걸 권장해요.
 2. **ML 모델 탑재:** 발표 3-4 기준(Macro F1 +0.05, 피험자 과반 개선, 처리 p95 ≤ 200ms)을 만족할 때만 ONNX 모델을 앱에 넣어요. 그 전까지는 규칙 판정기만 써요.
