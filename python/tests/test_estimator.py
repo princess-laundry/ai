@@ -51,6 +51,8 @@ def test_features_recover_geometry_for_both_facings():
         assert f.head_ratio == pytest.approx(0.3)
         assert f.torso_angle == pytest.approx(25)
         assert f.length == pytest.approx(200)
+        # 골반→귀 = 몸통 1.42L 위 + 머리 0.3L 앞 → 25° + atan(0.3/1.42)
+        assert f.axis_angle == pytest.approx(25 + math.degrees(math.atan2(0.3, 1.42)))
 
 
 def test_rigid_lean_does_not_look_like_forward_head():
@@ -90,7 +92,7 @@ def test_normal_then_forward_head_switches_after_window():
     result = run(est, steady(5, head_ratio=0.5), start=2200)
     assert result.state == NORMAL  # 1초로는 70%에 못 미침
     result = run(est, steady(6, head_ratio=0.5), start=3200)
-    assert result.state == FHP and result.head_forward is True and result.torso_lean is False
+    assert result.state == FHP and result.axis_angle > Thresholds().lean_degrees
 
 
 def test_brief_movement_is_ignored():
@@ -100,15 +102,13 @@ def test_brief_movement_is_ignored():
     assert result.state == NORMAL
 
 
-def test_lean_and_head_are_independent_attributes():
-    est = PostureEstimator()
-    result = run(est, steady(16, torso_deg=30))
-    # 상태는 거북목으로 통합하지만, 속성은 따로 남아요
-    assert result.state == FHP and result.head_forward is False and result.torso_lean
-    assert result.state != LEAN
-    est = PostureEstimator()
-    result = run(est, steady(16, torso_deg=30, head_ratio=0.5))
-    assert result.state == FHP and result.head_forward and result.torso_lean
+def test_one_axis_catches_head_forward_and_leaning():
+    # 팀 결정: 골반→귀 선 하나로 판정. 머리만 내밀어도, 허리만 숙여도 거북목
+    for kw in ({"head_ratio": 0.5}, {"torso_deg": 30}, {"head_ratio": 0.3, "torso_deg": 10}):
+        result = run(PostureEstimator(), steady(16, **kw))
+        assert result.state == FHP and result.state != LEAN, kw
+    assert run(PostureEstimator(), steady(16, torso_deg=-25)).state == NORMAL   # 뒤로 기대기는 바른 자세
+    assert run(PostureEstimator(), steady(16, head_ratio=0.15)).state == NORMAL  # 살짝 내민 정도는 통과
 
 
 def test_missing_person_becomes_away_and_occluded_unknown():

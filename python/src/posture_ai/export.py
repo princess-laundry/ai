@@ -18,7 +18,6 @@ def thresholds_json(t: Thresholds) -> dict:
         "t2_angle": round(float(t.lean_degrees), 2),
         "stable_sec": t.stable_ms / 1000.0,
         "analysis_fps": t.analysis_fps,
-        "t1_delta": round(float(t.head_delta), 4),
         "t2_delta": round(float(t.lean_delta_degrees), 2),
     }
 
@@ -26,8 +25,9 @@ def thresholds_json(t: Thresholds) -> dict:
 def thresholds_sql(t: Thresholds, activate: bool = False) -> str:
     """백엔드 threshold_configs에 새 버전을 등록하는 SQL. 기존 버전은 고치지 않습니다(V2 마이그레이션 주석 참고)."""
     c = thresholds_json(t)
-    delta_note = (f"-- 캘리브레이션용 t1_delta={c['t1_delta']}, t2_delta={c['t2_delta']}: "
-                  "threshold_configs에 컬럼이 생기면 함께 등록하세요(docs/integration.md).\n")
+    delta_note = ("-- t2_angle = 골반→귀 선 기울기 임계값(도). t1_ratio는 판정에 안 써요(호환용).\n"
+                  f"-- 캘리브레이션용 t2_delta={c['t2_delta']}: threshold_configs에 컬럼이 생기면 함께 등록하세요"
+                  "(docs/integration.md).\n")
     insert = delta_note + (
         "INSERT INTO threshold_configs (version, t1_ratio, t2_angle, stable_sec, analysis_fps, is_active)\n"
         f"VALUES ({c['version']}, {c['t1_ratio']}, {c['t2_angle']}, {c['stable_sec']}, {c['analysis_fps']}, false);\n"

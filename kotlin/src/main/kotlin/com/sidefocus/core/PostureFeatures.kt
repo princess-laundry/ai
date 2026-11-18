@@ -27,7 +27,9 @@ object PostureFeatures {
         /** 어깨→귀 각도 − 몸통 각도(도). 몸통 기준 목 꺾임. */
         val neckAngle: Double,
         /** 어깨–골반 길이(픽셀). */
-        val length: Double
+        val length: Double,
+        /** 골반→귀 벡터와 수직선 사이 각도(도). 앞으로 기울면 +. 판정에 쓰는 값(2026-11-18 팀 결정). */
+        val axisAngle: Double
     )
 
     /** 신뢰도 평균이 높은 쪽(같으면 왼쪽). 반환: 몸과 -1=왼쪽/+1=오른쪽/0=없음. */
@@ -81,7 +83,8 @@ object PostureFeatures {
         val hu = body.shoulder.y - body.ear.y
         val headRatio = (hx * tu - hu * tx) / (length * length)
         val neckAngle = wrapDegrees(Math.toDegrees(atan2(hx, hu)) - torsoAngle)
-        return Features(headRatio, torsoAngle, neckAngle, length)
+        val axisAngle = Math.toDegrees(atan2(facing * (body.ear.x - body.hip.x), body.hip.y - body.ear.y))
+        return Features(headRatio, torsoAngle, neckAngle, length, axisAngle)
     }
 
     fun wrapDegrees(value: Double): Double {

@@ -37,7 +37,7 @@ class GoldenParityTest {
         return Thresholds(
             t["version"]!!.jsonPrimitive.int, t["headRatio"]!!.jsonPrimitive.double,
             t["leanDegrees"]!!.jsonPrimitive.double, t["stableMs"]!!.jsonPrimitive.long, t["analysisFps"]!!.jsonPrimitive.int,
-            t.doubleOrNull("headDelta") ?: defaults.headDelta, t.doubleOrNull("leanDeltaDegrees") ?: defaults.leanDeltaDegrees)
+            t.doubleOrNull("leanDeltaDegrees") ?: defaults.leanDeltaDegrees)
     }
 
     private fun observation(f: JsonObject) = PoseObservation(
@@ -63,8 +63,7 @@ class GoldenParityTest {
                 val where = "calibration ${case["name"]!!.jsonPrimitive.content} frame $i"
                 assertEquals(e["status"]!!.jsonPrimitive.content, result.status.name, "$where status")
                 assertClose(e.doubleOrNull("progress"), result.progress, "$where progress")
-                assertClose(e.doubleOrNull("headRatio"), result.calibration?.headRatio, "$where headRatio")
-                assertClose(e.doubleOrNull("torsoAngle"), result.calibration?.torsoAngle, "$where torsoAngle")
+                assertClose(e.doubleOrNull("axisAngle"), result.calibration?.axisAngle, "$where axisAngle")
                 if (result.finished) seen += result.status.name
             }
         }
@@ -77,7 +76,7 @@ class GoldenParityTest {
         for (file in files) {
             val root = read(file)
             val calibration = (root["calibration"] as? JsonObject)?.let {
-                Calibration(it["headRatio"]!!.jsonPrimitive.double, it["torsoAngle"]!!.jsonPrimitive.double)
+                Calibration(it["axisAngle"]!!.jsonPrimitive.double)
             }
             val estimator = PostureEstimator(thresholds(root["thresholds"]!!.jsonObject), calibration)
             val frames = root["frames"]!!.jsonArray
@@ -92,11 +91,10 @@ class GoldenParityTest {
                 assertEquals(e["needsReset"]!!.jsonPrimitive.boolean, result.needsReset, "$where needsReset")
                 assertEquals(e["framed"]!!.jsonPrimitive.boolean, result.framed, "$where framed")
                 assertEquals(e["facing"]!!.jsonPrimitive.int, result.facing, "$where facing")
-                assertEquals(e.boolOrNull("headForward"), result.headForward, "$where headForward")
-                assertEquals(e.boolOrNull("torsoLean"), result.torsoLean, "$where torsoLean")
                 assertEquals(e.boolOrNull("calibrated") ?: false, result.calibrated, "$where calibrated")
                 assertClose(e.doubleOrNull("headRatio"), result.headRatio, "$where headRatio")
-                assertClose(e.doubleOrNull("torsoAngle"), result.leanDegrees, "$where torsoAngle")
+                assertClose(e.doubleOrNull("axisAngle"), result.leanDegrees, "$where axisAngle")
+                assertClose(e.doubleOrNull("torsoAngle"), result.torsoAngle, "$where torsoAngle")
                 assertClose(e.doubleOrNull("neckAngle"), result.neckAngle, "$where neckAngle")
             }
         }

@@ -55,23 +55,16 @@ def test_row_conversion_matches_app_rules():
 def test_windows_have_balanced_labels_and_calibration(small_dataset):
     samples = make_windows(small_dataset[0])
     assert set(samples["combo"]) == {"NORMAL", "FHP", "LEAN", "BOTH"}
-    assert samples[["d_head", "d_torso"]].notna().all().all()
+    assert samples[["d_axis", "d_head", "d_torso"]].notna().all().all()
     normal = samples[samples["combo"] == "NORMAL"]
     assert normal["d_head"].abs().max() < 0.1   # 기준 자세 대비 차이는 0 근처
 
 
-def test_threshold_tuning_separates_with_widest_margin():
-    samples = pd.DataFrame({"head_mean": [0.0, 0.05, 0.4, 0.45], "torso_mean": [0, 2, 30, 32], "fhp": [0, 0, 1, 1]})
-    pair = tune.fit(samples, "abs")
-    assert list(pair.predict(samples)) == [0, 0, 1, 1]
-    assert 10 <= pair.lean <= 25          # 두 자세 사이 가운데쯤
-
-
-def test_threshold_tuning_uses_either_cue_for_fhp():
-    # 한 사람은 머리만, 한 사람은 허리만 숙여도 둘 다 거북목으로 잡아야 해요(OR 판정)
-    samples = pd.DataFrame({"head_mean": [0.10, 0.12, 0.40, 0.11], "torso_mean": [2, 4, 3, 25], "fhp": [0, 0, 1, 1]})
-    pair = tune.fit(samples, "abs")
-    assert list(pair.predict(samples)) == [0, 0, 1, 1]
+def test_threshold_tuning_picks_middle_of_tied_range():
+    samples = pd.DataFrame({"axis_mean": [3.0, 6.0, 25.0, 30.0], "fhp": [0, 0, 1, 1]})
+    threshold = tune.fit(samples, "abs")
+    assert list(threshold.predict(samples)) == [0, 0, 1, 1]
+    assert 12 <= threshold.value <= 19          # 6°와 25° 사이 가운데쯤
 
 
 def test_single_posture_videos_share_the_subjects_baseline():
@@ -105,10 +98,10 @@ def test_threshold_export_matches_server_config_shape(tmp_path):
     export.write_thresholds(t, tmp_path, "note")
     config = json.loads((tmp_path / "thresholds.json").read_text())
     assert config == {"version": 3, "t1_ratio": 0.2, "t2_angle": 17.5, "stable_sec": 2.0, "analysis_fps": 5,
-                      "t1_delta": 0.15, "t2_delta": 12.0}
+                      "t2_delta": 9.5}
     assert Thresholds.from_server(config) == t
     sql = (tmp_path / "thresholds.sql").read_text(encoding="utf-8")
-    assert sql.startswith("-- note") and "t1_delta=0.15" in sql and "VALUES (3, 0.2, 17.5, 2.0, 5, false)" in sql
+    assert sql.startswith("-- note") and "t2_delta=9.5" in sql and "VALUES (3, 0.2, 17.5, 2.0, 5, false)" in sql
 
 
 def test_onnx_export_matches_sklearn(tmp_path, small_dataset):

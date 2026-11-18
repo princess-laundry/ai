@@ -22,9 +22,9 @@ from .estimator import PostureEstimator, Thresholds
 from .labels import Interval, TRANSITION_MARGIN_S, label_at
 from .landmarks import observations
 
-FEATURES = ("head_ratio", "torso_angle", "neck_angle")
-ABS_COLUMNS = ["head_mean", "head_std", "torso_mean", "torso_std", "neck_mean", "neck_std"]
-DELTA_COLUMNS = ["d_head", "head_std", "d_torso", "torso_std", "d_neck", "neck_std"]
+FEATURES = ("axis_angle", "head_ratio", "torso_angle", "neck_angle")
+ABS_COLUMNS = ["axis_mean", "axis_std", "head_mean", "head_std", "torso_mean", "torso_std", "neck_mean", "neck_std"]
+DELTA_COLUMNS = ["d_axis", "axis_std", "d_head", "head_std", "d_torso", "torso_std", "d_neck", "neck_std"]
 CALIBRATION_S = 5.0
 MAX_MISSING = 0.2
 
@@ -48,13 +48,14 @@ def trim_to_labels(landmarks: pd.DataFrame, labels: list[Interval]) -> pd.DataFr
 
 
 def frame_features(landmarks: pd.DataFrame, thresholds: Optional[Thresholds] = None) -> pd.DataFrame:
-    """프레임마다 판정기를 돌려 (t_ms, head_ratio, torso_angle, neck_angle, state, needs_reset)를 만듭니다."""
+    """프레임마다 판정기를 돌려 (t_ms, axis_angle, head_ratio, torso_angle, neck_angle, state, needs_reset)를 만듭니다."""
     estimator = PostureEstimator(thresholds or Thresholds())
     rows = []
     for obs in observations(landmarks):
         fb = estimator.update(obs)
         rows.append({
             "t_ms": obs.timestamp_ms,
+            "axis_angle": fb.axis_angle if fb.axis_angle is not None else np.nan,
             "head_ratio": fb.head_ratio if fb.head_ratio is not None else np.nan,
             "torso_angle": fb.torso_angle if fb.torso_angle is not None else np.nan,
             "neck_angle": fb.neck_angle if fb.neck_angle is not None else np.nan,
@@ -122,16 +123,18 @@ def make_windows(recording: Recording, window_s: float = 2.0, features: Optional
             "combo": lab.combo,
             "posture": lab.posture,
             "fhp": int(lab.posture == "FHP"),
+            "axis_mean": valid["axis_angle"].mean(), "axis_std": valid["axis_angle"].std(ddof=0),
             "head_mean": valid["head_ratio"].mean(), "head_std": valid["head_ratio"].std(ddof=0),
             "torso_mean": valid["torso_angle"].mean(), "torso_std": valid["torso_angle"].std(ddof=0),
             "neck_mean": valid["neck_angle"].mean(), "neck_std": valid["neck_angle"].std(ddof=0),
         }
         if base is not None:
-            row.update(d_head=row["head_mean"] - base["head_ratio"],
+            row.update(d_axis=row["axis_mean"] - base["axis_angle"],
+                       d_head=row["head_mean"] - base["head_ratio"],
                        d_torso=row["torso_mean"] - base["torso_angle"],
                        d_neck=row["neck_mean"] - base["neck_angle"])
         else:
-            row.update(d_head=np.nan, d_torso=np.nan, d_neck=np.nan)
+            row.update(d_axis=np.nan, d_head=np.nan, d_torso=np.nan, d_neck=np.nan)
         rows.append(row)
     return pd.DataFrame(rows)
 

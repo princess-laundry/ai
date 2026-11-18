@@ -212,8 +212,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--out", type=Path, default=REPO / "fixtures" / "golden")
     p = add("visualize", cmd_visualize, "영상에 스켈레톤·상태·라벨을 겹쳐 그리기")
     p.add_argument("recording")
-    p.add_argument("--t1", type=float, default=0.35)
-    p.add_argument("--t2", type=float, default=20.0)
+    p.add_argument("--t1", type=float, default=0.35, help="(판정에 안 씀, 호환용)")
+    p.add_argument("--t2", type=float, default=15.0, help="골반→귀 선 기울기 기준(도)")
     p.add_argument("--rotate", type=int, choices=[0, 90, 180, 270], default=0)
     p.add_argument("--out", type=Path, default=OUTPUTS / "overlay")
 

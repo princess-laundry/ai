@@ -22,7 +22,7 @@ from .features import BodySide, Point
 from .landmarks import observations
 
 THRESHOLDS = Thresholds(version=1, head_ratio=0.2, lean_degrees=15.0, stable_ms=2000, analysis_fps=5,
-                        head_delta=0.12, lean_delta_degrees=10.0)
+                        lean_delta_degrees=10.0)
 
 
 def _f32(value: float) -> float:
@@ -67,7 +67,7 @@ def _num(v: Optional[float]):
 
 def _thresholds_json(t: Thresholds) -> dict:
     return {"version": t.version, "headRatio": t.head_ratio, "leanDegrees": t.lean_degrees, "stableMs": t.stable_ms,
-            "analysisFps": t.analysis_fps, "headDelta": t.head_delta, "leanDeltaDegrees": t.lean_delta_degrees}
+            "analysisFps": t.analysis_fps, "leanDeltaDegrees": t.lean_delta_degrees}
 
 
 def case(name: str, frames: Iterable[Observation], thresholds: Thresholds = THRESHOLDS,
@@ -81,13 +81,12 @@ def case(name: str, frames: Iterable[Observation], thresholds: Thresholds = THRE
         expected.append({
             "state": fb.state, "needsReset": fb.needs_reset, "framed": fb.framed, "facing": fb.facing,
             "headRatio": _num(fb.head_ratio), "torsoAngle": _num(fb.torso_angle), "neckAngle": _num(fb.neck_angle),
-            "headForward": fb.head_forward, "torsoLean": fb.torso_lean, "calibrated": fb.calibrated,
+            "axisAngle": _num(fb.axis_angle), "calibrated": fb.calibrated,
         })
     return {
         "name": name,
         "thresholds": _thresholds_json(thresholds),
-        "calibration": None if calibration is None else {"headRatio": calibration.head_ratio,
-                                                         "torsoAngle": calibration.torso_angle},
+        "calibration": None if calibration is None else {"axisAngle": calibration.axis_angle},
         "frames": inputs,
         "expected": expected,
     }
@@ -104,8 +103,7 @@ def collector_case(name: str, frames: Iterable[Observation], thresholds: Thresho
         inputs.append(_frame_json(obs))
         c = result.calibration
         expected.append({"status": result.status, "progress": result.progress,
-                         "headRatio": None if c is None else c.head_ratio,
-                         "torsoAngle": None if c is None else c.torso_angle})
+                         "axisAngle": None if c is None else c.axis_angle})
     return {"name": name, "thresholds": _thresholds_json(thresholds), "frames": inputs, "expected": expected}
 
 
@@ -145,7 +143,7 @@ def build_cases() -> list[dict]:
 
 def _calibrated_case() -> dict:
     """평소에도 머리가 앞에 있고 몸통이 숙여진 사람: 절대 임계값이면 늘 이상 자세로 보이지만 개인 기준으로는 바른 자세."""
-    subject = synthetic.Subject("slouch", head_neutral=0.24, torso_neutral=17.0, head_shift=0.22, lean_shift=16.0,
+    subject = synthetic.Subject("slouch", head_neutral=0.15, torso_neutral=11.0, head_shift=0.22, lean_shift=16.0,
                                 facing=-1, noise_px=1.2, dropout=0.0)
     script = synthetic.script_intervals(synthetic.COLLECTION_SCRIPT)
     frames = list(observations(synthetic.generate(subject, script, seed=8)))
@@ -172,16 +170,23 @@ def build_collector_cases() -> dict:
         "cases": [
             collector_case("done", run([("NORMAL", 8)], 21)),
             collector_case("moving", run([("NORMAL", 1.6), ("LEAN", 1.6), ("NORMAL", 1.6), ("LEAN", 1.6), ("NORMAL", 2)], 22)),
-            collector_case("not_upright", run([("FHP", 8)], 23)),
+            collector_case("not_upright", run([("BOTH", 8)], 23)),
             collector_case("not_visible", run([("AWAY", 8)], 24)),
         ],
     }
 
 
+def _check_collector_cases(cases: dict) -> None:
+    for c in cases["cases"]:
+        assert c["expected"][-1]["status"] == c["name"].upper(), (c["name"], c["expected"][-1])
+
+
 def write(out_dir: Path) -> list[Path]:
     out_dir.mkdir(parents=True, exist_ok=True)
     paths = []
-    for c in build_cases() + [build_collector_cases()]:
+    collector = build_collector_cases()
+    _check_collector_cases(collector)
+    for c in build_cases() + [collector]:
         path = out_dir / f"{c['name']}.json"
         path.write_text(json.dumps(c, separators=(",", ":")) + "\n", encoding="utf-8", newline="\n")
         paths.append(path)

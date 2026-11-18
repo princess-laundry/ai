@@ -107,12 +107,11 @@ def analyze(recordings: list[Recording], out_dir: Path, *, synthetic: bool, vers
             "simulation_calibrated": sim_cal, "adopt_ml": adopt, "onnx": onnx_info}
 
 
-def _thresholds(version: int, absolute: "tune.ThresholdPair", delta: "tune.ThresholdPair | None") -> Thresholds:
-    """튜닝 결과를 Thresholds 허용 범위 안으로 맞춥니다. Δ를 못 구했으면 기본값."""
+def _thresholds(version: int, absolute: "tune.AxisThreshold", delta: "tune.AxisThreshold | None") -> Thresholds:
+    """튜닝 결과 → 서버 형식. t2_angle = 기울기 기준, t2_delta = 개인 기준 Δ. t1_ratio는 판정에 안 써서 기본값."""
     default = Thresholds()
-    return Thresholds(version=version, head_ratio=max(0.05, absolute.head), lean_degrees=max(1.0, absolute.lean),
-                      head_delta=max(0.01, delta.head) if delta else default.head_delta,
-                      lean_delta_degrees=max(1.0, delta.lean) if delta else default.lean_delta_degrees)
+    return Thresholds(version=version, lean_degrees=max(1.0, absolute.value),
+                      lean_delta_degrees=max(1.0, delta.value) if delta else default.lean_delta_degrees)
 
 
 def _row(method: str, mode: str, data: pd.DataFrame, pred) -> dict:
