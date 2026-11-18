@@ -72,11 +72,12 @@
 - 영상: `data/videos/<녹화이름>.mp4`. 예: `S1_R_rep1to3.mp4` (피험자_방향_회차)
 - `data/subjects.csv`
   ```csv
-  recording,subject,side,location,labeler,rotate
-  S1_R_rep1to3,S1,right,lab,A,0
-  S1_L_rep1to3,S1,left,lab,A,0
+  recording,subject,side,location,labeler,rotate,session
+  S1_R_rep1to3,S1,right,lab,A,0,S1a
+  S1_L_rep1to3,S1,left,lab,A,0,S1a
   ```
-  - `subject`: 분할 기준이에요. 같은 사람은 같은 ID를 써요.
+  - `subject`: 분할 기준이에요. 같은 사람은 같은 ID를 써요. **같은 사람을 다시 찍었으면 새 번호를 만들지 말고 같은 ID**를 써요(다른 사람처럼 계산하면 정확도가 부풀려져요).
+  - `session`(선택): 촬영 회차. 같은 사람을 다른 날·자리에서 다시 찍었으면 `S2a`, `S2b`처럼 나눠요. 개인 기준(캘리브레이션)은 같은 회차의 바른 자세 영상에서 잡아요.
   - `rotate`: 영상이 옆으로 누워 있으면 90/180/270을 적어요. 폰으로 세로 촬영한 영상은 머리가 왼쪽으로 누워 보이는 경우가 많은데, 그때는 90이에요.
 
 ## 촬영 후 처리 순서

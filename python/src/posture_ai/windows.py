@@ -4,7 +4,7 @@
 - 샘플 = 비중첩 2초 창(5fps면 10프레임)의 특징값 평균·표준편차.
 - 전환 ±1초, 제외 구간, 자리 비움, 라벨이 섞인 창, 특징값이 20% 넘게 빠진 창은 버립니다.
 - Δ특징: 녹화 시작 후 첫 바른 자세 구간에서 5초 동안의 중앙값(=앱의 5초 캘리브레이션)을 뺀 값.
-  자세별로 나눠 찍어서 그 녹화에 바른 자세 구간이 없으면, 같은 피험자의 다른 녹화에서 구한 기준을 씁니다.
+  자세별로 나눠 찍어서 그 녹화에 바른 자세 구간이 없으면, 같은 촬영 회차(session, 없으면 피험자)의 다른 녹화에서 구한 기준을 씁니다.
   기준을 구한 5초는 평가 창에서 뺍니다(기준과 같은 구간이라 차이가 0에 가깝게 나와서).
 - 정답 `fhp`: 머리 전방 또는 상체 기울임이면 1(거북목), 아니면 0(바른 자세). 2026-11-18 팀 결정.
 - 첫 라벨 앞(손뼉·자리 잡기)과 마지막 라벨 뒤 프레임은 버리고 판정기를 돌립니다.
@@ -35,6 +35,13 @@ class Recording:
     subject: str
     landmarks: pd.DataFrame
     labels: list[Interval]
+    session: str = ""
+    """촬영 회차(같은 날·같은 자리·같은 카메라 위치). 개인 기준(캘리브레이션)은 회차 안에서만 공유해요.
+    비우면 피험자 이름을 씁니다. 평가 분할(LOSO)은 회차가 아니라 피험자 단위예요."""
+
+    @property
+    def calibration_group(self) -> str:
+        return self.session or self.subject
 
 
 def trim_to_labels(landmarks: pd.DataFrame, labels: list[Interval]) -> pd.DataFrame:
@@ -69,18 +76,28 @@ Baseline = tuple[dict[str, float], tuple[float, float]]
 
 
 def calibration(features: pd.DataFrame, labels: list[Interval]) -> Optional[Baseline]:
-    """첫 바른 자세 구간(전환 1초 이후)에서 5초 동안의 특징값 중앙값과 그 구간(초)."""
+    """첫 바른 자세 구간(전환 1초 이후)에서 앱 캘리브레이션 조건을 통과하는 첫 5초의 특징값 중앙값과 그 구간(초).
+
+    앱처럼 5초 동안 잘 보이고(유효 80% 이상) 움직이지 않아야(기울기 표준편차 ≤ 4°) 해요.
+    실패하면 앱에서 다시 시도하는 것처럼 1초 뒤에서 다시 찾아요.
+    """
+    from .calibration import MAX_AXIS_STD, MIN_VALID_FRAMES, MIN_VALID_PERCENT
+
+    t = features["t_ms"] / 1000.0
     for interval in sorted(labels, key=lambda i: i.start_s):
         if interval.combo != "NORMAL" or interval.exclude:
             continue
         start = interval.start_s + TRANSITION_MARGIN_S
-        end = min(interval.end_s - TRANSITION_MARGIN_S, start + CALIBRATION_S)
-        if end - start < CALIBRATION_S * 0.6:
-            continue
-        t = features["t_ms"] / 1000.0
-        part = features[(t >= start) & (t < end)].dropna(subset=list(FEATURES))
-        if len(part) >= 5:
-            return {f: float(part[f].median()) for f in FEATURES}, (start, end)
+        last_start = interval.end_s - TRANSITION_MARGIN_S - CALIBRATION_S
+        while start <= last_start + 1e-9:
+            end = start + CALIBRATION_S
+            frames = features[(t >= start) & (t < end)]
+            part = frames.dropna(subset=list(FEATURES))
+            part = part[~part["needs_reset"]]
+            if (len(part) >= MIN_VALID_FRAMES and len(part) * 100 >= MIN_VALID_PERCENT * len(frames)
+                    and float(np.std(part["axis_angle"])) <= MAX_AXIS_STD):
+                return {f: float(part[f].median()) for f in FEATURES}, (start, end)
+            start += 1.0
     return None
 
 
@@ -143,13 +160,13 @@ def build_samples(recordings: Iterable[Recording]) -> pd.DataFrame:
     recordings = list(recordings)
     feats = {r.name: frame_features(trim_to_labels(r.landmarks, r.labels)) for r in recordings}
     own = {r.name: calibration(feats[r.name], r.labels) for r in recordings}
-    subject_base: dict[str, dict[str, float]] = {}
+    group_base: dict[str, dict[str, float]] = {}
     for r in recordings:
         if own[r.name] is not None:
-            subject_base.setdefault(r.subject, own[r.name][0])
+            group_base.setdefault(r.calibration_group, own[r.name][0])
     frames = []
     for r in recordings:
-        base, skip = own[r.name] if own[r.name] is not None else (subject_base.get(r.subject), None)
+        base, skip = own[r.name] if own[r.name] is not None else (group_base.get(r.calibration_group), None)
         frames.append(make_windows(r, features=feats[r.name], base=base, skip=skip))
     frames = [f for f in frames if not f.empty]
     return pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
