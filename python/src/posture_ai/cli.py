@@ -84,6 +84,20 @@ def cmd_label_script(args) -> None:
     print(f"{out}: {len(intervals)}개 구간")
 
 
+def cmd_label_whole(args) -> None:
+    """자세별로 나눠 찍은 영상: 영상 전체를 한 자세로 라벨링(앞뒤 자리 잡는 시간은 뺌)."""
+    from .labels import Interval, write_labels
+    from .landmarks import read_csv
+    landmarks = read_csv(args.data / "landmarks" / f"{args.recording}.csv")
+    end = float(landmarks["t_ms"].max()) / 1000.0 - args.trim_end
+    if end - args.trim_start < 5:
+        raise SystemExit(f"{args.recording}: 앞뒤를 빼고 나면 5초도 안 남아요.")
+    out = args.data / "labels" / f"{args.recording}.csv"
+    # 거북목은 원인(머리/허리)을 구분하지 않아요. head_forward=1로 기록하고, 분석은 fhp(머리 또는 허리)로 해요.
+    write_labels([Interval(args.trim_start, end, args.posture == "fhp", False)], out)
+    print(f"{out}: {args.trim_start:.1f}~{end:.1f}초 = {'거북목' if args.posture == 'fhp' else '바른 자세'}")
+
+
 def cmd_label_keys(args) -> None:
     from .label_tool import record_keys
     record_keys(args.data / "labels" / f"{args.recording}.csv", args.offset)
@@ -126,7 +140,7 @@ def _print_result(result, out: Path) -> None:
     print(result["comparison"].round(3).to_string(index=False))
     print("임계값:", json.dumps(result["thresholds"]))
     sim = result["simulation"]
-    print(f"앱 시뮬레이션: 프레임 정확도 {sim.frame_accuracy:.1%}, 시간당 오탐 {sim.false_alerts_per_hour:.1f}, "
+    print(f"앱 시뮬레이션(절대 임계값): 프레임 정확도 {sim.frame_accuracy:.1%}, 시간당 오탐 {sim.false_alerts_per_hour:.1f}, "
           f"미탐률 {sim.miss_rate:.1%}, 확정 지연 중앙값 {sim.latency_median_s:.1f}s")
     print(f"ML 적용: {'후보' if result['adopt_ml'] else '규칙 MVP 유지'} · 리포트: {out / 'report.md'}")
 
@@ -175,6 +189,11 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--start", type=float, required=True, help="영상에서 대본 첫 자세가 시작된 시각(초)")
     p.add_argument("--script", choices=["collection", "scenario150"], default="collection")
     p.add_argument("--repeats", type=int, default=3)
+    p = add("label-whole", cmd_label_whole, "자세별로 나눠 찍은 영상: 영상 전체를 한 자세로 라벨링")
+    p.add_argument("recording")
+    p.add_argument("--posture", choices=["normal", "fhp"], required=True, help="normal=바른 자세, fhp=거북목")
+    p.add_argument("--trim-start", type=float, default=3.0, help="앞에서 뺄 시간(초, 손뼉·자리 잡기)")
+    p.add_argument("--trim-end", type=float, default=1.0, help="뒤에서 뺄 시간(초, 녹화 끄기)")
     p = add("label-keys", cmd_label_keys, "촬영하면서 키 입력으로 라벨 기록")
     p.add_argument("recording")
     p.add_argument("--offset", type=float, default=0.0, help="영상 시각 보정(초)")

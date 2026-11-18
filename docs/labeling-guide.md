@@ -20,6 +20,16 @@
 - 판단이 애매한 구간, 귀·어깨·골반이 가려진 구간, 피험자가 물을 마시는 등 대본에 없는 동작
 - 자세가 바뀌는 지점 **±1초**는 따로 표시하지 않아도 분석 코드가 자동으로 빼요.
 
+## 자세별로 나눠 찍은 영상
+
+영상 전체가 한 자세라 `label-whole`로 한 줄만 만들면 돼요(앞 3초·뒤 1초는 자동으로 빼요).
+```
+python -m posture_ai label-whole S1_normal --posture normal
+python -m posture_ai label-whole S1_fhp --posture fhp
+```
+- 거북목은 원인(머리/허리)을 나누지 않아요. 파일에는 `head_forward=1`로 기록되고, 분석은 "머리 또는 허리"(`fhp`)로 해요.
+- 영상 중간에 자세가 풀렸거나 몸을 크게 움직인 구간이 있으면 그 구간을 `exclude=1`로 따로 나눠 주세요.
+
 ## 라벨 파일 형식 (`data/labels/<녹화>.csv`)
 
 ```csv
@@ -34,7 +44,7 @@ start_s,end_s,head_forward,torso_lean,away,exclude
 
 - 수집 전에 이 문서의 정의·예시·제외 기준을 팀이 함께 확정해요.
 - 팀원 2명이 **같은 영상 일부**(전체의 20% 이상)를 각자 라벨링해요. 파일은 `labels_A/`, `labels_B/`처럼 따로 둬요.
-- 속성별 κ를 계산해요.
+- κ를 계산해요. 기준은 `fhp_kappa`(거북목/바른 자세)이고, head·lean은 참고용이에요.
   ```
   python -m posture_ai kappa labels_A/S1_R.csv labels_B/S1_R.csv
   ```

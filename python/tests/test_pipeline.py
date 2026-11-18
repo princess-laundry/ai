@@ -60,11 +60,34 @@ def test_windows_have_balanced_labels_and_calibration(small_dataset):
     assert normal["d_head"].abs().max() < 0.1   # 기준 자세 대비 차이는 0 근처
 
 
-def test_threshold_tuning_picks_middle_of_tied_range():
-    samples = pd.DataFrame({"head_mean": [0.0, 0.05, 0.4, 0.45], "torso_mean": [0, 2, 30, 32],
-                            "head_forward": [0, 0, 1, 1], "torso_lean": [0, 0, 1, 1]})
+def test_threshold_tuning_separates_with_widest_margin():
+    samples = pd.DataFrame({"head_mean": [0.0, 0.05, 0.4, 0.45], "torso_mean": [0, 2, 30, 32], "fhp": [0, 0, 1, 1]})
     pair = tune.fit(samples, "abs")
-    assert 0.15 <= pair.head <= 0.3 and 10 <= pair.lean <= 25
+    assert list(pair.predict(samples)) == [0, 0, 1, 1]
+    assert 10 <= pair.lean <= 25          # 두 자세 사이 가운데쯤
+
+
+def test_threshold_tuning_uses_either_cue_for_fhp():
+    # 한 사람은 머리만, 한 사람은 허리만 숙여도 둘 다 거북목으로 잡아야 해요(OR 판정)
+    samples = pd.DataFrame({"head_mean": [0.10, 0.12, 0.40, 0.11], "torso_mean": [2, 4, 3, 25], "fhp": [0, 0, 1, 1]})
+    pair = tune.fit(samples, "abs")
+    assert list(pair.predict(samples)) == [0, 0, 1, 1]
+
+
+def test_single_posture_videos_share_the_subjects_baseline():
+    from posture_ai.labels import Interval
+    from posture_ai.windows import trim_to_labels
+    subject = synthetic.random_subject("S9", np.random.default_rng(1))
+    normal_labels = [Interval(3, 40, False, False)]
+    fhp_labels = [Interval(3, 40, True, False)]
+    normal = Recording("S9_normal", "S9", synthetic.generate(subject, [Interval(0, 41, False, False)], seed=1), normal_labels)
+    fhp = Recording("S9_fhp", "S9", synthetic.generate(subject, [Interval(0, 41, True, False)], seed=2), fhp_labels)
+    assert trim_to_labels(normal.landmarks, normal_labels)["t_ms"].min() >= 3000   # 자리 잡는 앞부분은 버림
+    samples = build_samples([normal, fhp])
+    fhp_rows = samples[samples["recording"] == "S9_fhp"]
+    assert fhp_rows["d_head"].notna().all() and (fhp_rows["fhp"] == 1).all()        # 바른 자세 영상의 기준을 씀
+    normal_rows = samples[samples["recording"] == "S9_normal"]
+    assert (normal_rows["t_start"] >= 9).all()                                       # 기준을 구한 4~9초 창은 평가에서 뺌
 
 
 def test_app_simulation_counts_events(small_dataset):

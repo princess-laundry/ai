@@ -24,7 +24,7 @@ ai/
    - 둘 중 하나라도 해당하면 상태는 **거북목(FHP)**이에요. 상체 기울임(LEAN)을 따로 내보내지 않아요(팀 결정).
    - **개인 캘리브레이션:** 시작할 때 바른 자세로 5초 앉으면 그 사람 기준(Δ)으로 판정해요. 움직였거나, 안 보였거나, 처음부터 구부정했으면 다시 하라고 안내해요. 결과는 백엔드 `user_settings.calib_ratio`·`calib_angle`에 대응해요.
 2. **PC 분석:** 실험 영상 → MediaPipe 랜드마크(5fps) → 2초 창 샘플 → 다음 비교 → 리포트
-   - 비교: 임계값 / SVM / RF × 절대 / Δ특징, 피험자 단위 LOSO
+   - 비교: 임계값 / SVM / RF × 절대 / Δ특징, 피험자 단위 LOSO. 분류는 바른 자세 / 거북목 두 가지
    - 리포트에 들어가는 것: 임계값 SQL, ONNX 모델, 앱 시뮬레이션(오탐·미탐·지연)
 3. **합성 데이터 데모:** 영상이 없어도 전체 흐름을 끝까지 돌려 볼 수 있어요. **나오는 수치는 실제 성능이 아니에요.**
 
@@ -58,13 +58,14 @@ $env:JAVA_HOME = "C:\Program Files\Java\jdk-21"   # JAVA_HOME이 잘못 잡혀 �
 cd python
 .venv\Scripts\python -m posture_ai model                       # MediaPipe lite 모델 준비(앱과 같은 파일인지 SHA 확인)
 .venv\Scripts\python -m posture_ai extract                     # data/videos → data/landmarks (5fps)
-.venv\Scripts\python -m posture_ai label-script S1_R --start 4.2 --repeats 3
+.venv\Scripts\python -m posture_ai label-whole S1_normal --posture normal   # 자세별로 나눠 찍은 영상
+.venv\Scripts\python -m posture_ai label-script S1_R --start 4.2 --repeats 3  # 한 영상에서 자세를 바꿔 찍은 경우
 .venv\Scripts\python -m posture_ai visualize S1_R              # 스켈레톤·상태·라벨을 겹친 검수 영상
 .venv\Scripts\python -m posture_ai kappa A.csv B.csv           # 라벨러 일치도
 .venv\Scripts\python -m posture_ai analyze --version 2         # → outputs/real/report.md, thresholds.sql, model_*.onnx
 ```
 
-`data/`와 `outputs/`는 git에 올라가지 않아요. 실험 영상은 동의를 받은 뒤 팀 PC에만 보관하고, 프로젝트가 끝나면 삭제해요.
+`data/`와 `outputs/`는 git에 올라가지 않아요. 영상을 OneDrive 밖(예: `C:\posture-data`)에 두려면 명령마다 `--data C:\posture-data`를 붙여요. 실험 영상은 동의를 받은 뒤 팀 PC에만 보관하고, 프로젝트가 끝나면 삭제해요.
 
 ## 판정 규칙을 고칠 때
 
