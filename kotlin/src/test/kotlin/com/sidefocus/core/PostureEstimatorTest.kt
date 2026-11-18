@@ -81,12 +81,14 @@ class PostureEstimatorTest {
         assertFailsWith<IllegalArgumentException> { Thresholds(analysisFps = 500) }
     }
 
-    @Test fun `torso leaning is classified independently of head offset`() {
+    @Test fun `torso leaning alone is also reported as FHP`() {
         val estimator = PostureEstimator()
         val result = run(estimator, 0, 3000, body(torsoDeg = 30.0))
-        assertEquals(Posture.LEAN, result.state)
-        assertEquals(0.0, result.headRatio!!, 1e-9)  // 몸통과 함께 숙인 머리는 전방머리가 아님
+        assertEquals(Posture.FHP, result.state)  // 팀 결정: 상체 기울임도 거북목으로 통합
+        assertEquals(0.0, result.headRatio!!, 1e-9)  // 속성은 따로: 몸통과 함께 숙인 머리는 머리 전방이 아님
         assertEquals(false, result.headForward)
+        assertEquals(true, result.torsoLean)
+        assertEquals("허리를 펴고 상체를 세워 보세요", result.message)
     }
 
     @Test fun `both attributes are reported and FHP wins the single state`() {

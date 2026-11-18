@@ -85,7 +85,7 @@ class AppSimulation:
 
 
 def _expected_state(interval: Interval) -> str:
-    return interval.posture  # 둘 다면 FHP 우선
+    return interval.posture  # 머리 전방·상체 기울임 모두 FHP
 
 
 def calibrate_recording(rec: Recording, thresholds: Thresholds) -> CalibrationResult:

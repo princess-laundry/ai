@@ -153,17 +153,17 @@ class PostureEstimator(
             val total = window.size
             head = decide(head, window.count { it.second }, total)
             lean = decide(lean, window.count { it.third }, total)
-            current = when {
-                head == true -> Posture.FHP
-                lean == true -> Posture.LEAN
-                else -> Posture.NORMAL
-            }
+            // 2026-11-18 팀 결정: 머리 전방·상체 기울임 모두 FHP(거북목)로 통합. LEAN은 내보내지 않음
+            current = if (head == true || lean == true) Posture.FHP else Posture.NORMAL
         }
 
         val message = when (current) {
             Posture.NORMAL -> "좋아요. 편안하게 집중해 보세요"
-            Posture.FHP -> if (lean == true) "턱을 당기고 허리를 펴 보세요" else "턱을 가볍게 당기고 시선을 높여 보세요"
-            Posture.LEAN -> "허리를 펴고 상체를 세워 보세요"
+            Posture.FHP -> when {
+                head == true && lean == true -> "턱을 당기고 허리를 펴 보세요"
+                head == true -> "턱을 가볍게 당기고 시선을 높여 보세요"
+                else -> "허리를 펴고 상체를 세워 보세요"
+            }
             Posture.AWAY -> "돌아오면 공부 시간을 자동으로 기록해요"
             else -> "자세가 안정될 때까지 잠시 기다려 주세요"
         }

@@ -36,13 +36,11 @@ class Interval:
 
     @property
     def posture(self) -> str:
-        """서버 단일 상태로 바꾼 값(둘 다면 FHP 우선)."""
+        """앱이 내야 하는 단일 상태. 머리 전방·상체 기울임은 모두 FHP(거북목)예요(2026-11-18 팀 결정)."""
         if self.away:
             return "AWAY"
-        if self.head_forward:
+        if self.head_forward or self.torso_lean:
             return "FHP"
-        if self.torso_lean:
-            return "LEAN"
         return "NORMAL"
 
     @property
