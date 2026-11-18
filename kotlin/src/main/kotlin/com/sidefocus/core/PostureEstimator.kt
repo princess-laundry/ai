@@ -13,12 +13,16 @@ data class Thresholds(
     val stableMs: Long = 2_000,
     val analysisFps: Int = 5,
     /** 서버 t2_delta. 캘리브레이션했을 때 기준 자세 대비 기울기 증가량 임계값(도). 1차 실험 기준 예비값. */
-    val leanDeltaDegrees: Double = 9.5
+    val leanDeltaDegrees: Double = 9.5,
+    /** 서버 t3_pitch(아직 없음). 고개 숙임(귀→코) 임계값(도). 1차 실험 기준 예비값. */
+    val pitchDegrees: Double = 42.0,
+    /** 서버 t3_delta(아직 없음). 캘리브레이션했을 때 기준 자세 대비 고개 숙임 증가량 임계값(도). */
+    val pitchDeltaDegrees: Double = 15.0
 ) {
     init {
         require(version > 0 && headRatio in 0.05..2.0 && leanDegrees in 1.0..89.0)
         require(stableMs in 200..10_000 && analysisFps in 1..10)
-        require(leanDeltaDegrees in 1.0..89.0)
+        require(leanDeltaDegrees in 1.0..89.0 && pitchDegrees in 1.0..89.0 && pitchDeltaDegrees in 1.0..89.0)
     }
 }
 
@@ -59,7 +63,9 @@ data class PoseFeedback(
     /** +1: 이미지 오른쪽이 앞, −1: 왼쪽이 앞, 0: 아직 모름. */
     val facing: Int = 0,
     /** 개인 캘리브레이션 기준으로 판정했는지. */
-    val calibrated: Boolean = false
+    val calibrated: Boolean = false,
+    /** 고개 숙임 각도(도, 스무딩). 판정에 쓰는 값 ②. 이번 프레임에 코가 안 보이면 null. */
+    val headPitch: Double? = null
 ) {
     val framed: Boolean get() = body != null && !needsReset
 }
@@ -69,12 +75,13 @@ data class PoseFeedback(
  * ai/fixtures/golden 의 입력에 대해 같은 출력을 내는지 GoldenParityTest로 확인합니다.
  *
  * 1. 품질 필터·측면 선택 → 2. 앞쪽 방향 통일(코, 없으면 보이는 쪽, 세션 다수결) → 3. 거치 기울기 보정
- * → 4. 5프레임 중앙값 스무딩 → 5. 골반→귀 선 기울기 → 6. 기준보다 기울면 거북목 후보
+ * → 4. 5프레임 중앙값 스무딩 → 5. ① 골반→귀 선 기울기 ② 고개 숙임(귀→코)
+ * → 6. ① > leanDegrees 또는 ② > pitchDegrees면 거북목 후보(코가 안 보이면 ①만)
  * → 7. 최근 2초 창에서 70% 이상 일치하면 전환(히스테리시스) → NORMAL 또는 FHP.
- * 머리를 내밀어도, 허리를 숙여도 골반→귀 선이 기울어서 둘 다 거북목으로 잡힘(2026-11-18 팀 결정).
+ * 머리를 내밀어도, 허리를 숙여도, 허리는 펴고 고개만 숙여도 거북목(2026-11-18 팀 결정).
  *
- * @param calibration 있으면 '기울기 − 기준 자세 기울기 > leanDeltaDegrees', 없으면 '기울기 > leanDegrees'로 판정.
- *   CalibrationCollector로 만들고, 서버 user_settings의 calib_angle에 저장할 수 있음.
+ * @param calibration 있으면 각각 기준 자세 대비 증가량을 leanDeltaDegrees·pitchDeltaDegrees와 비교.
+ *   지금 앱에서는 쓰지 않음(2026-11-18 결정). 다시 켤 때를 위해 남겨 둠.
  */
 class PostureEstimator(
     private val thresholds: Thresholds = Thresholds(),
@@ -89,6 +96,7 @@ class PostureEstimator(
     private val angles = ArrayDeque<Double>()
     private val necks = ArrayDeque<Double>()
     private val axes = ArrayDeque<Double>()
+    private val pitches = ArrayDeque<Double>()
     private val lengths = ArrayDeque<Double>()
     private val window = ArrayDeque<Pair<Long, Boolean>>()
     private var windowStart: Long? = null
@@ -129,6 +137,7 @@ class PostureEstimator(
         val angle = smooth(angles, raw.torsoAngle)
         val neck = smooth(necks, raw.neckAngle)
         val axis = smooth(axes, raw.axisAngle)
+        val pitch = PostureFeatures.headPitch(upright.ear, nose, facing)?.let { smooth(pitches, it) }
         val length = smooth(lengths, raw.length)
 
         val baseline = baselineLength
@@ -143,7 +152,14 @@ class PostureEstimator(
         }
 
         val c = calibration
-        val fhpNow = if (c != null) axis - c.axisAngle > thresholds.leanDeltaDegrees else axis > thresholds.leanDegrees
+        val leaning = if (c != null) axis - c.axisAngle > thresholds.leanDeltaDegrees else axis > thresholds.leanDegrees
+        val basePitch = c?.headPitch
+        val bowing = when {
+            pitch == null -> false
+            basePitch != null -> pitch - basePitch > thresholds.pitchDeltaDegrees
+            else -> pitch > thresholds.pitchDegrees
+        }
+        val fhpNow = leaning || bowing
         if (windowStart == null) windowStart = observation.timestampMs
         window.addLast(observation.timestampMs to fhpNow)
         while (window.isNotEmpty() && window.first().first <= observation.timestampMs - thresholds.stableMs) window.removeFirst()
@@ -159,11 +175,11 @@ class PostureEstimator(
             Posture.AWAY -> "돌아오면 공부 시간을 자동으로 기록해요"
             else -> "자세가 안정될 때까지 잠시 기다려 주세요"
         }
-        return PoseFeedback(current, body, ratio, axis, false, message, neck, angle, facing, calibration != null)
+        return PoseFeedback(current, body, ratio, axis, false, message, neck, angle, facing, calibration != null, pitch)
     }
 
     private fun clearTracking() {
-        ratios.clear(); angles.clear(); necks.clear(); axes.clear(); lengths.clear()
+        ratios.clear(); angles.clear(); necks.clear(); axes.clear(); pitches.clear(); lengths.clear()
         window.clear()
         windowStart = null
         fhp = null

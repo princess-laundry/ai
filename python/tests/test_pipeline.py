@@ -60,11 +60,24 @@ def test_windows_have_balanced_labels_and_calibration(small_dataset):
     assert normal["d_head"].abs().max() < 0.1   # 기준 자세 대비 차이는 0 근처
 
 
-def test_threshold_tuning_picks_middle_of_tied_range():
-    samples = pd.DataFrame({"axis_mean": [3.0, 6.0, 25.0, 30.0], "fhp": [0, 0, 1, 1]})
-    threshold = tune.fit(samples, "abs")
-    assert list(threshold.predict(samples)) == [0, 0, 1, 1]
-    assert 12 <= threshold.value <= 19          # 6°와 25° 사이 가운데쯤
+def test_threshold_tuning_separates_with_widest_margin():
+    samples = pd.DataFrame({"axis_mean": [3.0, 6.0, 25.0, 30.0], "pitch_mean": [20.0, 25.0, 30.0, 60.0], "fhp": [0, 0, 1, 1]})
+    pair = tune.fit(samples, "abs")
+    assert list(pair.predict(samples)) == [0, 0, 1, 1]
+    assert 10 <= pair.axis <= 21          # 6°와 25° 사이 가운데쯤
+
+
+def test_threshold_tuning_catches_head_bowing_with_upright_back():
+    # 마지막 사람은 허리는 펴고(기울기 8°) 고개만 숙임(55°) → 고개 숙임 기준으로 잡아야 해요
+    samples = pd.DataFrame({"axis_mean": [4.0, 7.0, 28.0, 8.0], "pitch_mean": [20.0, 26.0, 50.0, 55.0], "fhp": [0, 0, 1, 1]})
+    pair = tune.fit(samples, "abs")
+    assert list(pair.predict(samples)) == [0, 0, 1, 1]
+    assert 26 < pair.pitch < 50
+
+
+def test_missing_nose_falls_back_to_axis():
+    samples = pd.DataFrame({"axis_mean": [4.0, 30.0], "pitch_mean": [np.nan, np.nan], "fhp": [0, 1]})
+    assert list(tune.ThresholdPair(axis=11.0, pitch=40.0, mode="abs").predict(samples)) == [0, 1]
 
 
 def test_single_posture_videos_share_the_subjects_baseline():
@@ -83,6 +96,41 @@ def test_single_posture_videos_share_the_subjects_baseline():
     assert (normal_rows["t_start"] >= 9).all()                                       # 기준을 구한 4~9초 창은 평가에서 뺌
 
 
+def test_calibration_retries_after_movement_like_the_app():
+    # 바른 자세 영상인데 4~7초에 몸을 크게 움직임 → 앱처럼 다시 재서 움직임이 끝난 뒤의 5초를 기준으로
+    from posture_ai.calibration import DONE
+    from posture_ai.evaluate import calibrate_recording
+    from posture_ai.labels import Interval
+    from posture_ai.windows import calibration, frame_features, trim_to_labels
+    subject = synthetic.random_subject("S9", np.random.default_rng(1))
+    motion = synthetic.script_intervals([("NORMAL", 4), ("BOTH", 3), ("NORMAL", 34)])
+    labels = [Interval(3, 40, False, False)]
+    rec = Recording("moving_start", "S9", synthetic.generate(subject, motion, seed=5), labels)
+    _, (start, _) = calibration(frame_features(trim_to_labels(rec.landmarks, labels)), labels)
+    assert start >= 7.0
+    assert calibrate_recording(rec, Thresholds()).status == DONE
+
+
+def test_refilmed_session_uses_its_own_baseline():
+    # 같은 사람을 다른 날 다시 찍으면(자세·카메라가 달라짐) 기준은 그 회차의 바른 자세 영상에서 잡아요
+    from dataclasses import replace
+    from posture_ai.labels import Interval
+    base = synthetic.random_subject("S9", np.random.default_rng(1))
+    later = replace(base, torso_neutral=base.torso_neutral + 8.0)                    # 다시 찍은 날은 평소 자세가 8° 더 숙여짐
+    labels = [Interval(3, 40, False, False)]
+    fhp_labels = [Interval(3, 40, True, False)]
+    recs = [
+        Recording("a_normal", "S9", synthetic.generate(base, [Interval(0, 41, False, False)], seed=1), labels, "S9a"),
+        Recording("b_normal", "S9", synthetic.generate(later, [Interval(0, 41, False, False)], seed=3), labels, "S9b"),
+        Recording("b_fhp", "S9", synthetic.generate(later, [Interval(0, 41, True, False)], seed=4), fhp_labels, "S9b"),
+    ]
+    samples = build_samples(recs)
+    b_normal_axis = samples[samples["recording"] == "b_normal"]["axis_mean"].median()
+    b_fhp = samples[samples["recording"] == "b_fhp"]
+    assert (b_fhp["d_axis"] - (b_fhp["axis_mean"] - b_normal_axis)).abs().max() < 2.0  # 같은 회차(b) 기준
+    assert samples["subject"].nunique() == 1                                          # 평가 분할은 여전히 사람 단위
+
+
 def test_app_simulation_counts_events(small_dataset):
     sim = simulate_app([(r, Thresholds(head_ratio=0.2, lean_degrees=12)) for r in small_dataset])
     assert sim.events == 9 and sim.frames > 0 and 0 <= sim.miss_rate <= 1
@@ -98,7 +146,7 @@ def test_threshold_export_matches_server_config_shape(tmp_path):
     export.write_thresholds(t, tmp_path, "note")
     config = json.loads((tmp_path / "thresholds.json").read_text())
     assert config == {"version": 3, "t1_ratio": 0.2, "t2_angle": 17.5, "stable_sec": 2.0, "analysis_fps": 5,
-                      "t2_delta": 9.5}
+                      "t2_delta": 9.5, "t3_pitch": 42.0, "t3_delta": 15.0}
     assert Thresholds.from_server(config) == t
     sql = (tmp_path / "thresholds.sql").read_text(encoding="utf-8")
     assert sql.startswith("-- note") and "t2_delta=9.5" in sql and "VALUES (3, 0.2, 17.5, 2.0, 5, false)" in sql

@@ -4,7 +4,8 @@
   data/videos/<recording>.mp4     실험 영상(동의 후, 프로젝트 종료 시 삭제)
   data/landmarks/<recording>.csv  extract 결과
   data/labels/<recording>.csv     정답 라벨
-  data/subjects.csv               recording,subject,side,location,labeler[,rotate]
+  data/subjects.csv               recording,subject,side,location,labeler[,rotate][,session]
+                                  session: 같은 사람을 다른 날·자리에서 다시 찍었으면 회차를 구분(캘리브레이션 기준을 회차별로 잡음)
 """
 
 from __future__ import annotations
@@ -36,7 +37,9 @@ def load_dataset(data: Path):
     for row in subjects.itertuples():
         lm, lb = data / "landmarks" / f"{row.recording}.csv", data / "labels" / f"{row.recording}.csv"
         if lm.exists() and lb.exists():
-            recordings.append(Recording(str(row.recording), str(row.subject), read_csv(lm), read_labels(lb)))
+            session = getattr(row, "session", "")
+            session = "" if session is None or (isinstance(session, float) and session != session) else str(session)
+            recordings.append(Recording(str(row.recording), str(row.subject), read_csv(lm), read_labels(lb), session))
         else:
             skipped.append(str(row.recording))
     if skipped:

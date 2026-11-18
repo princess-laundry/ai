@@ -22,7 +22,7 @@ from .features import BodySide, Point
 from .landmarks import observations
 
 THRESHOLDS = Thresholds(version=1, head_ratio=0.2, lean_degrees=15.0, stable_ms=2000, analysis_fps=5,
-                        lean_delta_degrees=10.0)
+                        lean_delta_degrees=10.0, pitch_degrees=38.0, pitch_delta_degrees=14.0)
 
 
 def _f32(value: float) -> float:
@@ -67,7 +67,8 @@ def _num(v: Optional[float]):
 
 def _thresholds_json(t: Thresholds) -> dict:
     return {"version": t.version, "headRatio": t.head_ratio, "leanDegrees": t.lean_degrees, "stableMs": t.stable_ms,
-            "analysisFps": t.analysis_fps, "leanDeltaDegrees": t.lean_delta_degrees}
+            "analysisFps": t.analysis_fps, "leanDeltaDegrees": t.lean_delta_degrees,
+            "pitchDegrees": t.pitch_degrees, "pitchDeltaDegrees": t.pitch_delta_degrees}
 
 
 def case(name: str, frames: Iterable[Observation], thresholds: Thresholds = THRESHOLDS,
@@ -81,12 +82,13 @@ def case(name: str, frames: Iterable[Observation], thresholds: Thresholds = THRE
         expected.append({
             "state": fb.state, "needsReset": fb.needs_reset, "framed": fb.framed, "facing": fb.facing,
             "headRatio": _num(fb.head_ratio), "torsoAngle": _num(fb.torso_angle), "neckAngle": _num(fb.neck_angle),
-            "axisAngle": _num(fb.axis_angle), "calibrated": fb.calibrated,
+            "axisAngle": _num(fb.axis_angle), "headPitch": _num(fb.head_pitch), "calibrated": fb.calibrated,
         })
     return {
         "name": name,
         "thresholds": _thresholds_json(thresholds),
-        "calibration": None if calibration is None else {"axisAngle": calibration.axis_angle},
+        "calibration": None if calibration is None else {"axisAngle": calibration.axis_angle,
+                                                         "headPitch": _num(calibration.head_pitch)},
         "frames": inputs,
         "expected": expected,
     }
@@ -103,7 +105,8 @@ def collector_case(name: str, frames: Iterable[Observation], thresholds: Thresho
         inputs.append(_frame_json(obs))
         c = result.calibration
         expected.append({"status": result.status, "progress": result.progress,
-                         "axisAngle": None if c is None else c.axis_angle})
+                         "axisAngle": None if c is None else c.axis_angle,
+                         "headPitch": None if c is None else _num(c.head_pitch)})
     return {"name": name, "thresholds": _thresholds_json(thresholds), "frames": inputs, "expected": expected}
 
 

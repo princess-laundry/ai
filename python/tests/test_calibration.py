@@ -22,6 +22,24 @@ def observe(t, b):
     return Observation(t, True, right=b, nose=nose_for(b))
 
 
+def observe_pitch(t, b, pitch):
+    return Observation(t, True, right=b, nose=nose_for(b, 1, pitch))
+
+
+def test_calibration_records_head_pitch_and_judges_bowing_relative_to_it():
+    usual = body()
+    result = calibrate(lambda t: observe_pitch(t, usual, 32.0))   # 평소 고개를 조금 숙이는 사람
+    assert result.status == DONE and abs(result.calibration.head_pitch - 32.0) < 1e-9
+    est = PostureEstimator(Thresholds(), result.calibration)
+    out = None
+    for t in range(0, 3001, 200):
+        out = est.update(observe_pitch(t, usual, 44.0))           # 절대 기준(42°)은 넘지만 평소보다 12°만 더 숙임
+    assert out.state == NORMAL
+    for t in range(3200, 6001, 200):
+        out = est.update(observe_pitch(t, usual, 52.0))           # 평소보다 20° 더 숙임 → 거북목
+    assert out.state == FHP
+
+
 def test_calibration_lets_slouched_baseline_read_as_normal():
     usual = body(head_ratio=0.30, torso_deg=10.0)   # 기울기 약 21.9°: 절대 기준(13°)이면 늘 거북목, 캘리브레이션 한도(13°+9.5°) 안
     result = calibrate(lambda t: observe(t, usual))
@@ -38,6 +56,8 @@ def test_calibration_failures():
     assert calibrate(lambda t: observe(t, body(torso_deg=0 if t // 1000 % 2 == 0 else 25))).status == MOVING
     assert calibrate(lambda t: Observation(t, False)).status == NOT_VISIBLE
     assert calibrate(lambda t: observe(t, body(torso_deg=35))).status == NOT_UPRIGHT   # 35° > 13° + 9.5°
+    assert calibrate(lambda t: observe_pitch(t, body(), 70.0)).status == NOT_UPRIGHT   # 고개 70° > 42° + 15°
+    assert calibrate(lambda t: observe_pitch(t, body(), 20.0 if t // 1000 % 2 == 0 else 45.0)).status == MOVING
 
 
 def test_result_is_fixed_after_finishing():

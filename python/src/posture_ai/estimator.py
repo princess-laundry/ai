@@ -2,10 +2,13 @@
 
 앱(5fps)과 PC(녹화 영상을 5fps로 추출)가 같은 코드 흐름을 쓰도록 프레임 단위로 동작합니다.
 
-판정(2026-11-18 팀 결정): 골반→귀 선이 수직에서 앞으로 기운 각도(axis_angle) 하나로 봅니다.
-  - 절대 기준: axis_angle > lean_degrees(서버 t2_angle)
-  - 개인 기준(캘리브레이션): axis_angle − 기준 자세의 axis_angle > lean_delta_degrees(서버 t2_delta)
-  넘으면 거북목(FHP), 아니면 바른 자세(NORMAL). head_ratio·torso_angle·neck_angle은 참고·분석용이에요.
+판정(2026-11-18 팀 결정): 둘 중 하나라도 넘으면 거북목(FHP), 아니면 바른 자세(NORMAL).
+  ① 몸 기울기 axis_angle(골반→귀 선이 수직에서 앞으로 기운 각도) > lean_degrees(서버 t2_angle)
+     → 머리를 내밀거나 허리를 숙이면 커져요.
+  ② 고개 숙임 head_pitch(귀→코 선이 수평에서 아래로 숙인 각도) > pitch_degrees(서버 t3_pitch, 아직 없음 → 기본값)
+     → 허리는 펴고 고개만 숙여도 커져요. 코가 안 보이면 ①만 봐요.
+  개인 기준(캘리브레이션)이면 각각 기준 자세 대비 증가량을 lean_delta_degrees / pitch_delta_degrees와 비교해요.
+  head_ratio·torso_angle·neck_angle은 참고·분석용이에요.
 """
 
 from __future__ import annotations
@@ -20,6 +23,7 @@ from .features import (
     Point,
     compute_features,
     facing_vote,
+    head_pitch,
     rotate,
     rotate_body,
     select_side,
@@ -52,13 +56,18 @@ class Thresholds:
     analysis_fps: int = 5
     lean_delta_degrees: float = 9.5
     """서버 t2_delta. 캘리브레이션했을 때 기준 자세 대비 기울기 증가량 임계값(도). 1차 실험 기준 예비값."""
+    pitch_degrees: float = 42.0
+    """서버 t3_pitch(아직 없음). 고개 숙임 임계값(도). 1차 실험 기준 예비값."""
+    pitch_delta_degrees: float = 15.0
+    """서버 t3_delta(아직 없음). 캘리브레이션했을 때 기준 자세 대비 고개 숙임 증가량 임계값(도)."""
 
     def __post_init__(self) -> None:
         if not (self.version > 0 and 0.05 <= self.head_ratio <= 2.0 and 1.0 <= self.lean_degrees <= 89.0):
             raise ValueError("invalid thresholds")
         if not (200 <= self.stable_ms <= 10_000 and 1 <= self.analysis_fps <= 10):
             raise ValueError("invalid thresholds")
-        if not (1.0 <= self.lean_delta_degrees <= 89.0):
+        if not (1.0 <= self.lean_delta_degrees <= 89.0 and 1.0 <= self.pitch_degrees <= 89.0
+                and 1.0 <= self.pitch_delta_degrees <= 89.0):
             raise ValueError("invalid thresholds")
 
     @classmethod
@@ -71,6 +80,8 @@ class Thresholds:
             stable_ms=int(round(float(config["stable_sec"]) * 1000)),
             analysis_fps=int(config["analysis_fps"]),
             lean_delta_degrees=float(config.get("t2_delta") or cls.lean_delta_degrees),
+            pitch_degrees=float(config.get("t3_pitch") or cls.pitch_degrees),
+            pitch_delta_degrees=float(config.get("t3_delta") or cls.pitch_delta_degrees),
         )
 
 
@@ -92,7 +103,9 @@ class Feedback:
     torso_angle: Optional[float] = None
     neck_angle: Optional[float] = None
     axis_angle: Optional[float] = None
-    """골반→귀 선 기울기(도, 스무딩). 판정에 쓰는 값."""
+    """골반→귀 선 기울기(도, 스무딩). 판정에 쓰는 값 ①."""
+    head_pitch: Optional[float] = None
+    """고개 숙임 각도(도, 스무딩). 판정에 쓰는 값 ②. 이번 프레임에 코가 안 보이면 None."""
     needs_reset: bool = False
     facing: int = 0
     calibrated: bool = False
@@ -118,6 +131,7 @@ class PostureEstimator:
         self._angles: deque[float] = deque()
         self._necks: deque[float] = deque()
         self._axes: deque[float] = deque()
+        self._pitches: deque[float] = deque()
         self._lengths: deque[float] = deque()
         self._window: deque[tuple[int, bool]] = deque()
         self._window_start: Optional[int] = None
@@ -127,7 +141,7 @@ class PostureEstimator:
 
     # ------------------------------------------------------------------ 내부 도우미
     def _clear_tracking(self) -> None:
-        for buffer in (self._ratios, self._angles, self._necks, self._axes, self._lengths):
+        for buffer in (self._ratios, self._angles, self._necks, self._axes, self._pitches, self._lengths):
             buffer.clear()
         self._window.clear()
         self._window_start = None
@@ -188,6 +202,8 @@ class PostureEstimator:
         angle = self._smooth(self._angles, raw.torso_angle)
         neck = self._smooth(self._necks, raw.neck_angle)
         axis = self._smooth(self._axes, raw.axis_angle)
+        raw_pitch = head_pitch(upright.ear, nose, facing)
+        pitch = self._smooth(self._pitches, raw_pitch) if raw_pitch is not None else None
         length = self._smooth(self._lengths, raw.length)
 
         if self.baseline_length is None:
@@ -202,7 +218,14 @@ class PostureEstimator:
             return Feedback(state=UNKNOWN, body=body, needs_reset=True, facing=facing)
 
         c = self.calibration
-        fhp = axis - c.axis_angle > t.lean_delta_degrees if c is not None else axis > t.lean_degrees
+        leaning = axis - c.axis_angle > t.lean_delta_degrees if c is not None else axis > t.lean_degrees
+        if pitch is None:
+            bowing = False
+        elif c is not None and c.head_pitch is not None:
+            bowing = pitch - c.head_pitch > t.pitch_delta_degrees
+        else:
+            bowing = pitch > t.pitch_degrees
+        fhp = leaning or bowing
         if self._window_start is None:
             self._window_start = obs.timestamp_ms
         self._window.append((obs.timestamp_ms, fhp))
@@ -220,6 +243,7 @@ class PostureEstimator:
             torso_angle=angle,
             neck_angle=neck,
             axis_angle=axis,
+            head_pitch=pitch,
             facing=facing,
             calibrated=self.calibration is not None,
         )

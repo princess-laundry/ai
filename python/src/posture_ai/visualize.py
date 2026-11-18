@@ -59,7 +59,8 @@ def _draw(cv2, frame, fb, t_s: float, labels) -> None:
             cv2.circle(frame, p, 7, color, -1)
     lines = [f"t={t_s:6.1f}s  state={fb.state}{'  RESET' if fb.needs_reset else ''}"]
     if fb.head_ratio is not None:
-        lines.append(f"axis={fb.axis_angle:+.1f}  head={fb.head_ratio:+.3f}  torso={fb.torso_angle:+.1f}  facing={fb.facing:+d}")
+        pitch = "-" if fb.head_pitch is None else f"{fb.head_pitch:+.1f}"
+        lines.append(f"axis={fb.axis_angle:+.1f}  pitch={pitch}  torso={fb.torso_angle:+.1f}  facing={fb.facing:+d}")
     if labels is not None:
         truth = label_at(labels, t_s, 0.0)
         lines.append(f"label={truth.combo if truth else '-'}{' (exclude)' if truth and truth.exclude else ''}")

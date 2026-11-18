@@ -87,6 +87,18 @@ object PostureFeatures {
         return Features(headRatio, torsoAngle, neckAngle, length, axisAngle)
     }
 
+    /**
+     * 귀→코 선이 수평에서 아래로 숙인 각도(도). 고개를 숙이면 커짐. 코가 없거나 신뢰도가 낮으면 null.
+     * 골반→귀 기울기로는 '허리는 펴고 고개만 숙인 자세'가 잘 안 잡혀서 함께 봄(2026-11-18 팀 결정).
+     */
+    fun headPitch(ear: Point, nose: Point?, facing: Int): Double? {
+        if (nose == null || nose.confidence < MIN_CONFIDENCE || !nose.x.isFinite() || !nose.y.isFinite()) return null
+        val forward = facing * (nose.x - ear.x)
+        val down = nose.y - ear.y
+        if (hypot(forward, down) < 1e-3) return null
+        return Math.toDegrees(atan2(down, forward))
+    }
+
     fun wrapDegrees(value: Double): Double {
         var v = value
         while (v > 180.0) v -= 360.0

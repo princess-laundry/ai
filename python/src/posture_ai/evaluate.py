@@ -91,28 +91,39 @@ def _expected_state(interval: Interval) -> str:
 
 
 def calibrate_recording(rec: Recording, thresholds: Thresholds) -> CalibrationResult:
-    """앱처럼 5초 캘리브레이션을 합니다. 시작점은 첫 바른 자세 구간 시작 1초 뒤(진행자가 '바르게 앉기'를 안내한 상황)."""
-    start = next((i.start_s + 1.0 for i in sorted(rec.labels, key=lambda i: i.start_s)
-                  if i.combo == "NORMAL" and not i.exclude), None)
-    if start is None:
+    """앱처럼 5초 캘리브레이션을 합니다. 시작점은 첫 바른 자세 구간 시작 1초 뒤(진행자가 '바르게 앉기'를 안내한 상황).
+
+    실패하면(움직임·가림·구부정) 앱이 안내 후 다시 재는 것처럼, 바른 자세 구간이 끝날 때까지 다시 시도합니다.
+    끝까지 실패하면 마지막 실패 결과를 돌려줍니다.
+    """
+    normal = next((i for i in sorted(rec.labels, key=lambda i: i.start_s) if i.combo == "NORMAL" and not i.exclude), None)
+    if normal is None:
         return CalibrationResult(NOT_VISIBLE, 1.0)
+    start, end = normal.start_s + 1.0, normal.end_s
     est = PostureEstimator(thresholds)
     collector = CalibrationCollector(thresholds)
-    result = CalibrationResult()
+    last = CalibrationResult(NOT_VISIBLE, 1.0)
     for obs in observations(trim_to_labels(rec.landmarks, rec.labels)):
         fb = est.update(obs)
-        if obs.timestamp_ms / 1000.0 >= start:
-            result = collector.add(obs.timestamp_ms, fb)
-            if result.finished:
-                break
-    return result if result.finished else CalibrationResult(NOT_VISIBLE, 1.0)
+        t = obs.timestamp_ms / 1000.0
+        if t < start:
+            continue
+        if t >= end:
+            break
+        result = collector.add(obs.timestamp_ms, fb)
+        if result.status == DONE:
+            return result
+        if result.finished:
+            last = result
+            collector = CalibrationCollector(thresholds)  # 다시 시도
+    return last
 
 
 def simulate_app(runs: Iterable[tuple[Recording, Thresholds]], calibrate: bool = False) -> AppSimulation:
     """녹화마다 (녹화, 적용할 임계값)으로 앱과 같은 판정기를 돌립니다.
 
-    calibrate=True면 피험자마다 5초 캘리브레이션을 하고 Δ 임계값으로 판정합니다.
-    캘리브레이션은 그 사람의 녹화 중 바른 자세 구간이 있는 첫 녹화에서 하고, 같은 사람의 다른 녹화에도 씁니다
+    calibrate=True면 촬영 회차(session, 없으면 피험자)마다 5초 캘리브레이션을 하고 Δ 임계값으로 판정합니다.
+    캘리브레이션은 그 회차의 녹화 중 바른 자세 구간이 있는 첫 녹화에서 하고, 같은 회차의 다른 녹화에도 씁니다
     (자세별로 나눠 찍은 영상은 거북목 영상에 바른 자세 구간이 없어서). 같은 자리·같은 카메라 위치라고 가정해요.
     캘리브레이션이 실패하면 앱과 같이 절대 임계값으로 돌아가고 calibration_failures(녹화 수)에 셉니다.
 
@@ -130,13 +141,13 @@ def simulate_app(runs: Iterable[tuple[Recording, Thresholds]], calibrate: bool =
     calibrations: dict[str, object] = {}
     if calibrate:
         for rec, thresholds in runs:
-            if calibrations.get(rec.subject) is not None or not any(i.posture == NORMAL and not i.exclude for i in rec.labels):
+            if calibrations.get(rec.calibration_group) is not None or not any(i.posture == NORMAL and not i.exclude for i in rec.labels):
                 continue
             result = calibrate_recording(rec, thresholds)
-            calibrations[rec.subject] = result.calibration if result.status == DONE else None
+            calibrations[rec.calibration_group] = result.calibration if result.status == DONE else None
     for rec, thresholds in runs:
         stable_s = thresholds.stable_ms / 1000.0
-        calibration = calibrations.get(rec.subject) if calibrate else None
+        calibration = calibrations.get(rec.calibration_group) if calibrate else None
         failures += int(calibrate and calibration is None)
         est = PostureEstimator(thresholds, calibration)
         states: list[tuple[float, str]] = []
