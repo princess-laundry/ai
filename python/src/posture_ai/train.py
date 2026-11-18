@@ -1,7 +1,7 @@
 """SVM·Random Forest 학습과 LOSO 비교 (발표 3-1의 4가지 조건).
 
-- 분류 대상: 네 자세(NORMAL/FHP/LEAN/BOTH) 하나의 분류기 → 머리·몸통 속성으로 풀어서 속성별 Macro F1을 봅니다.
-  (모델 파일을 하나로 유지해 앱 탑재가 단순해집니다.)
+- 분류 대상: 바른 자세(0) / 거북목(1). 2026-11-18 팀 결정으로 상체 기울임도 거북목이에요.
+  점수는 두 자세의 Macro F1입니다.
 - SVM: 표준화는 학습 데이터로만(파이프라인 안), RBF 커널, class_weight=balanced.
 - RF: class_weight=balanced, 트리 수·깊이는 학습 피험자 안에서 다시 LOSO로 고릅니다(개발군 선택).
 """
@@ -19,7 +19,7 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
 from sklearn.svm import SVC
 
-from .evaluate import attribute_scores
+from .evaluate import binary_scores
 from .windows import ABS_COLUMNS, DELTA_COLUMNS
 
 SVM_GRID = [{"C": c} for c in (0.3, 1.0, 3.0, 10.0)]
@@ -39,15 +39,8 @@ def make_model(kind: str, params: dict, seed: int = 0):
     raise ValueError(kind)
 
 
-def _attributes(combo: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    combo = np.asarray(combo)
-    return np.isin(combo, ["FHP", "BOTH"]).astype(int), np.isin(combo, ["LEAN", "BOTH"]).astype(int)
-
-
 def _score(y_true: np.ndarray, y_pred: np.ndarray) -> float:
-    ht, lt = _attributes(y_true)
-    hp, lp = _attributes(y_pred)
-    return attribute_scores(ht, hp, lt, lp)["mean_f1"]
+    return binary_scores(y_true, y_pred)["f1"]
 
 
 def select_params(kind: str, data: pd.DataFrame, mode: str, seed: int = 0) -> dict:
@@ -56,7 +49,7 @@ def select_params(kind: str, data: pd.DataFrame, mode: str, seed: int = 0) -> di
     subjects = sorted(data["subject"].unique())
     if len(subjects) < 2:
         return grid[0]
-    X, y = data[columns(mode)].to_numpy(), data["combo"].to_numpy()
+    X, y = data[columns(mode)].to_numpy(), data["fhp"].to_numpy().astype(int)
     best, best_score = grid[0], -1.0
     for params in grid:
         scores = []
@@ -75,30 +68,26 @@ def select_params(kind: str, data: pd.DataFrame, mode: str, seed: int = 0) -> di
 @dataclass
 class LosoResult:
     folds: pd.DataFrame
-    head_pred: np.ndarray
-    lean_pred: np.ndarray
+    pred: np.ndarray  # 1=거북목
     rows: pd.Index
 
 
 def leave_one_subject_out(samples: pd.DataFrame, kind: str, mode: str, seed: int = 0) -> LosoResult:
     data = samples.dropna(subset=columns(mode))
-    X, y = data[columns(mode)].to_numpy(), data["combo"].to_numpy()
-    pred = np.empty(len(data), dtype=object)
+    X, y = data[columns(mode)].to_numpy(), data["fhp"].to_numpy().astype(int)
+    pred = np.zeros(len(data), dtype=int)
     rows = []
     for held in sorted(data["subject"].unique()):
         test = (data["subject"] == held).to_numpy()
         params = select_params(kind, data[~test], mode, seed)
         model = make_model(kind, params, seed).fit(X[~test], y[~test])
         pred[test] = model.predict(X[test])
-        ht, lt = _attributes(y[test])
-        hp, lp = _attributes(pred[test])
-        rows.append({"held_out": held, "params": params, **attribute_scores(ht, hp, lt, lp)})
-    head_pred, lean_pred = _attributes(pred)
-    return LosoResult(pd.DataFrame(rows), head_pred, lean_pred, data.index)
+        rows.append({"held_out": held, "params": params, **binary_scores(y[test], pred[test])})
+    return LosoResult(pd.DataFrame(rows), pred, data.index)
 
 
 def fit_final(samples: pd.DataFrame, kind: str, mode: str, seed: int = 0):
     """전체 데이터로 최종 모델을 학습합니다(앱 탑재 후보)."""
     data = samples.dropna(subset=columns(mode))
     params = select_params(kind, data, mode, seed)
-    return make_model(kind, params, seed).fit(data[columns(mode)].to_numpy(), data["combo"].to_numpy()), params
+    return make_model(kind, params, seed).fit(data[columns(mode)].to_numpy(), data["fhp"].to_numpy().astype(int)), params

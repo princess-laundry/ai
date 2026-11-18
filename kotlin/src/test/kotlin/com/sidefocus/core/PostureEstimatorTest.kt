@@ -6,7 +6,8 @@ import kotlin.test.*
 
 /**
  * 프론트 core의 기존 PostureEstimatorTest를 새 판정 규칙에 맞게 고친 버전입니다(프론트의 같은 파일을 이걸로 교체).
- * 바뀐 점: 앞쪽 방향을 코로 정하고, 머리 특징은 몸통 기준, 2초 창 70% 일치로 전환.
+ * 바뀐 점: 앞쪽 방향을 코로 정하고, 골반→귀 선 기울기 하나로 판정(머리를 내밀어도 허리를 숙여도 거북목),
+ * 2초 창 70% 일치로 전환.
  */
 class PostureEstimatorTest {
     /** 이미지 오른쪽을 보는 사람. headRatio·torsoDeg를 정확히 갖도록 만든 측면 몸(y 아래). */
@@ -41,8 +42,7 @@ class PostureEstimatorTest {
         assertEquals(Posture.NORMAL, run(estimator, 2400, 3200, body(headRatio = 0.5)).state)  // 1초로는 부족
         val result = run(estimator, 3400, 4600, body(headRatio = 0.5))
         assertEquals(Posture.FHP, result.state)
-        assertEquals(true, result.headForward)
-        assertEquals(false, result.torsoLean)
+        assertTrue(result.leanDegrees!! > Thresholds().leanDegrees)  // 머리만 내밀어도 골반→귀 선이 기울어요
     }
 
     @Test fun `person missing and occluded person differ`() {
@@ -84,18 +84,20 @@ class PostureEstimatorTest {
     @Test fun `torso leaning alone is also reported as FHP`() {
         val estimator = PostureEstimator()
         val result = run(estimator, 0, 3000, body(torsoDeg = 30.0))
-        assertEquals(Posture.FHP, result.state)  // 팀 결정: 상체 기울임도 거북목으로 통합
-        assertEquals(0.0, result.headRatio!!, 1e-9)  // 속성은 따로: 몸통과 함께 숙인 머리는 머리 전방이 아님
-        assertEquals(false, result.headForward)
-        assertEquals(true, result.torsoLean)
-        assertEquals("허리를 펴고 상체를 세워 보세요", result.message)
+        assertEquals(Posture.FHP, result.state)  // 팀 결정: 상체 기울임도 거북목
+        assertEquals(30.0, result.leanDegrees!!, 1e-6)  // 머리가 몸통과 일직선이면 골반→귀 기울기 = 몸통 각도
+        assertEquals(30.0, result.torsoAngle!!, 1e-6)
+        assertEquals("턱을 당기고 허리를 펴 보세요", result.message)
     }
 
-    @Test fun `both attributes are reported and FHP wins the single state`() {
+    @Test fun `head forward and leaning add up on one axis`() {
         val result = run(PostureEstimator(), 0, 3000, body(headRatio = 0.5, torsoDeg = 30.0))
         assertEquals(Posture.FHP, result.state)
-        assertEquals(true, result.headForward)
-        assertEquals(true, result.torsoLean)
+        assertEquals(30.0 + Math.toDegrees(kotlin.math.atan2(0.5, 1.42)), result.leanDegrees!!, 1e-6)
+    }
+
+    @Test fun `slight head offset stays normal`() {
+        assertEquals(Posture.NORMAL, run(PostureEstimator(), 0, 3000, body(headRatio = 0.15)).state)
     }
 
     @Test fun `leaning back is not leaning forward`() {
@@ -125,7 +127,7 @@ class PostureEstimatorTest {
     }
 
     @Test fun `calibration makes a habitually slouched person read as normal`() {
-        val usual = body(headRatio = 0.40, torsoDeg = 22.0)   // 이 사람의 평소 바른 자세
+        val usual = body(headRatio = 0.30, torsoDeg = 10.0)   // 이 사람의 평소 바른 자세(기울기 약 21.9°)
         assertEquals(Posture.FHP, run(PostureEstimator(), 0, 3000, usual).state)  // 절대 기준이면 계속 경고
 
         val collector = CalibrationCollector()
@@ -138,7 +140,7 @@ class PostureEstimatorTest {
         val normal = run(calibrated, 0, 3000, usual)
         assertEquals(Posture.NORMAL, normal.state)
         assertTrue(normal.calibrated)
-        assertEquals(Posture.FHP, run(calibrated, 3200, 6000, body(headRatio = 0.60, torsoDeg = 22.0)).state)
+        assertEquals(Posture.FHP, run(calibrated, 3200, 6000, body(headRatio = 0.30, torsoDeg = 25.0)).state)
     }
 
     @Test fun `calibration rejects moving, hidden, and clearly slouched starts`() {
@@ -151,7 +153,7 @@ class PostureEstimatorTest {
         }
         assertEquals(CalibrationStatus.MOVING, calibrate { t -> observe(t, body(torsoDeg = if (t / 1000 % 2 == 0L) 0.0 else 25.0)) })
         assertEquals(CalibrationStatus.NOT_VISIBLE, calibrate { t -> PoseObservation(t, false) })
-        assertEquals(CalibrationStatus.NOT_UPRIGHT, calibrate { t -> observe(t, body(headRatio = 0.7)) })
+        assertEquals(CalibrationStatus.NOT_UPRIGHT, calibrate { t -> observe(t, body(torsoDeg = 35.0)) })  // 35° > 13° + 9.5°
     }
 
     @Test fun `nonfinite landmarks cannot pass the setup gate`() {

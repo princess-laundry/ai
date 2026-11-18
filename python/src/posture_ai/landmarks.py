@@ -94,7 +94,8 @@ def extract_video(
     if not capture.isOpened():
         raise FileNotFoundError(f"영상을 열 수 없습니다: {video}")
     options = PoseLandmarkerOptions(
-        base_options=BaseOptions(model_asset_path=str(model)),
+        # 경로에 한글이 있으면 MediaPipe가 파일을 못 열어서 내용을 직접 넘김
+        base_options=BaseOptions(model_asset_buffer=Path(model).read_bytes()),
         running_mode=RunningMode.VIDEO,
         num_poses=1,
         min_pose_detection_confidence=0.5,

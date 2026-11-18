@@ -55,16 +55,32 @@ def test_row_conversion_matches_app_rules():
 def test_windows_have_balanced_labels_and_calibration(small_dataset):
     samples = make_windows(small_dataset[0])
     assert set(samples["combo"]) == {"NORMAL", "FHP", "LEAN", "BOTH"}
-    assert samples[["d_head", "d_torso"]].notna().all().all()
+    assert samples[["d_axis", "d_head", "d_torso"]].notna().all().all()
     normal = samples[samples["combo"] == "NORMAL"]
     assert normal["d_head"].abs().max() < 0.1   # 기준 자세 대비 차이는 0 근처
 
 
 def test_threshold_tuning_picks_middle_of_tied_range():
-    samples = pd.DataFrame({"head_mean": [0.0, 0.05, 0.4, 0.45], "torso_mean": [0, 2, 30, 32],
-                            "head_forward": [0, 0, 1, 1], "torso_lean": [0, 0, 1, 1]})
-    pair = tune.fit(samples, "abs")
-    assert 0.15 <= pair.head <= 0.3 and 10 <= pair.lean <= 25
+    samples = pd.DataFrame({"axis_mean": [3.0, 6.0, 25.0, 30.0], "fhp": [0, 0, 1, 1]})
+    threshold = tune.fit(samples, "abs")
+    assert list(threshold.predict(samples)) == [0, 0, 1, 1]
+    assert 12 <= threshold.value <= 19          # 6°와 25° 사이 가운데쯤
+
+
+def test_single_posture_videos_share_the_subjects_baseline():
+    from posture_ai.labels import Interval
+    from posture_ai.windows import trim_to_labels
+    subject = synthetic.random_subject("S9", np.random.default_rng(1))
+    normal_labels = [Interval(3, 40, False, False)]
+    fhp_labels = [Interval(3, 40, True, False)]
+    normal = Recording("S9_normal", "S9", synthetic.generate(subject, [Interval(0, 41, False, False)], seed=1), normal_labels)
+    fhp = Recording("S9_fhp", "S9", synthetic.generate(subject, [Interval(0, 41, True, False)], seed=2), fhp_labels)
+    assert trim_to_labels(normal.landmarks, normal_labels)["t_ms"].min() >= 3000   # 자리 잡는 앞부분은 버림
+    samples = build_samples([normal, fhp])
+    fhp_rows = samples[samples["recording"] == "S9_fhp"]
+    assert fhp_rows["d_head"].notna().all() and (fhp_rows["fhp"] == 1).all()        # 바른 자세 영상의 기준을 씀
+    normal_rows = samples[samples["recording"] == "S9_normal"]
+    assert (normal_rows["t_start"] >= 9).all()                                       # 기준을 구한 4~9초 창은 평가에서 뺌
 
 
 def test_app_simulation_counts_events(small_dataset):
@@ -82,10 +98,10 @@ def test_threshold_export_matches_server_config_shape(tmp_path):
     export.write_thresholds(t, tmp_path, "note")
     config = json.loads((tmp_path / "thresholds.json").read_text())
     assert config == {"version": 3, "t1_ratio": 0.2, "t2_angle": 17.5, "stable_sec": 2.0, "analysis_fps": 5,
-                      "t1_delta": 0.15, "t2_delta": 12.0}
+                      "t2_delta": 9.5}
     assert Thresholds.from_server(config) == t
     sql = (tmp_path / "thresholds.sql").read_text(encoding="utf-8")
-    assert sql.startswith("-- note") and "t1_delta=0.15" in sql and "VALUES (3, 0.2, 17.5, 2.0, 5, false)" in sql
+    assert sql.startswith("-- note") and "t2_delta=9.5" in sql and "VALUES (3, 0.2, 17.5, 2.0, 5, false)" in sql
 
 
 def test_onnx_export_matches_sklearn(tmp_path, small_dataset):

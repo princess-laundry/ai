@@ -18,20 +18,21 @@ AI 파트 결과물을 앱과 서버에 붙이는 방법이에요. **ai 저장�
 - `PostureStub.kt`는 복사하지 마세요. 프론트에는 `Session.kt`에 `Posture`가 이미 있어요.
 - `GoldenParityTest.kt`는 선택이에요. 복사해도 golden 폴더가 없으면 자동으로 건너뛰어요.
 - **공개 API는 그대로예요.** `PostureEstimator(thresholds).update(PoseObservation)`, `PoseFeedback.copy(...)`, `framed`, `SetupGate`를 그대로 쓰면 돼요. 앱 코드는 고치지 않아도 컴파일돼요.
+- **이미 PR #1 버전을 넣었다면(2026-11-18 프론트 PR #2):** 위 4개 파일을 최신 버전으로 다시 덮어쓰면 돼요. 판정 방식이 "골반→귀 선 기울기 하나"로 바뀌었고, 앱 코드(`CameraSurface`의 코 좌표 등)는 그대로 둬도 돼요.
 - 교체 전에 ai 저장소에서 `kotlin/gradlew verifyAgainstFrontend`를 돌리면, 프론트 core 소스·테스트와 함께 컴파일하고 테스트까지 해요(현재 통과).
 
 ### 2. 바뀌는 동작
 
 | 항목 | 기존 | 새 판정기 |
 |---|---|---|
-| 머리 특징 | \|귀.x − 어깨.x\| ÷ 길이 | 몸통 축에 수직인 앞쪽 성분 ÷ 길이(부호 있음) |
-| 몸통 각도 | 절댓값(뒤로 젖혀도 +) | 부호 있음(앞 +, 뒤 −) |
+| 판정 값 | 머리 비율·몸통 각도 따로 | **골반→귀 선 기울기 하나** (`leanDegrees`, 앞 +, 뒤 −). 머리를 내밀어도 허리를 숙여도 기울어요 |
+| 기준값 | `t1_ratio`·`t2_angle` | `t2_angle`만 씀(`t1_ratio`는 호환용으로만 남음) |
 | 앞쪽 방향 | 구분 없음 | 코 → 보이는 쪽 순서로 판단, 세션 다수결 |
 | 전환 | 2초 연속 같은 판정일 때 | 최근 2초 창에서 70% 이상일 때(200ms마다 갱신) |
-| 상체 기울임 | `LEAN` | **`FHP`(거북목)로 통합**. `LEAN`은 더 이상 나오지 않음. `torsoLean`으로 구분 가능 |
+| 상체 기울임 | `LEAN` | **`FHP`(거북목)로 통합**. `LEAN`은 더 이상 나오지 않음 |
 | 재세팅 기준 길이 | 첫 프레임 | 처음 1초 중앙값 |
 
-새로 생긴 `PoseFeedback` 필드(모두 기본값 있음): `headForward`, `torsoLean`, `neckAngle`, `facing`. 피드백 문구에 활용할 수 있어요.
+`PoseFeedback` 필드(모두 기본값 있음): `leanDegrees` = 골반→귀 선 기울기(판정 값), `headRatio`·`torsoAngle`·`neckAngle` = 참고용, `facing`, `calibrated`. PR #1에 있던 `headForward`·`torsoLean`은 없어졌어요(앱에서 쓰는 곳 없음).
 
 ### 3. 코 좌표 전달 (권장)
 
@@ -82,7 +83,7 @@ else if (result.status == CalibrationStatus.DONE) {
 
 ## 백엔드 (`threshold_configs`)
 
-- 스키마 변경은 **필요 없어요.** `t1_ratio`는 새 정의의 `headRatio` 임계값, `t2_angle`은 몸통 각도 임계값이에요.
+- 기본 판정에는 스키마 변경이 **필요 없어요.** `t2_angle`이 골반→귀 선 기울기 임계값(도)이고, `t1_ratio`는 판정에 안 써요(NOT NULL이라 아무 값이나 그대로 두면 돼요).
 - 실험 데이터로 `python -m posture_ai analyze`를 돌리면 `outputs/real/thresholds.sql`이 나와요. 새 버전 행을 넣고 활성 버전을 바꾸는 SQL이에요(기존 버전은 수정하지 않음).
   ```sql
   BEGIN;
@@ -96,10 +97,10 @@ else if (result.status == CalibrationStatus.DONE) {
 - 프론트가 새 판정기로 교체하는 시점과 v2 활성화 시점을 맞춰 주세요. 세션마다 `threshold_version`이 저장되니, 버전별로 전후 비교도 할 수 있어요.
 
 ### 개인 캘리브레이션 지원 (넣기로 확정, F8과 연결)
-- **기준값 저장:** `user_settings.calib_ratio` = `Calibration.headRatio`, `calib_angle` = `Calibration.torsoAngle`. 테이블은 이미 있어요. 기획서의 `GET/PUT /users/me/settings`가 구현되면 앱이 백업·복원할 수 있어요.
-- **Δ 임계값 (필요):** 캘리브레이션했을 때 쓰는 임계값 `t1_delta`, `t2_delta`를 `threshold_configs`에 nullable REAL 컬럼으로 추가하고 `/config` 응답에 넣어 주세요(V3 마이그레이션). 값이 없으면 앱은 기본값(0.15 / 12°)을 써요. `analyze`가 만드는 `thresholds.json`에 이 두 값이 들어 있어요.
+- **기준값 저장:** `user_settings.calib_angle` = `Calibration.axisAngle`(바른 자세의 골반→귀 기울기). `calib_ratio`는 안 써요. 테이블은 이미 있어요. 기획서의 `GET/PUT /users/me/settings`가 구현되면 앱이 백업·복원할 수 있어요.
+- **Δ 임계값 (필요):** 캘리브레이션했을 때 쓰는 임계값 `t2_delta` **하나**만 `threshold_configs`에 nullable REAL 컬럼으로 추가하고 `/config` 응답에 넣어 주세요(V3 마이그레이션). 값이 없으면 앱은 기본값(9.5°)을 써요. `t1_delta`는 필요 없어졌어요.
   ```sql
-  ALTER TABLE threshold_configs ADD COLUMN t1_delta REAL, ADD COLUMN t2_delta REAL;
+  ALTER TABLE threshold_configs ADD COLUMN t2_delta REAL;
   ```
 
 ---
@@ -107,9 +108,9 @@ else if (result.status == CalibrationStatus.DONE) {
 ## 팀 결정 사항 (2026-11-18 회의)
 
 1. **상태 전환:** 최근 2초 창에서 70% 이상 같은 판정이면 전환해요(발표 13쪽 방식). "2초 연속 유지" 방식은 쓰지 않아요.
-2. **머리 특징:** 부호 있는 값이에요. 머리가 **앞으로** 나왔을 때만 거북목이고, 뒤로 젖히면 음수예요.
+2. **판정 방식:** 골반→귀 선이 수직에서 앞으로 기운 각도 하나로 봐요(부호 있음, 뒤로 기대면 음수). 바른 자세(또는 개인 기준)보다 많이 기울면 거북목이에요. 1차 실험에서 머리·몸통을 따로 보던 방식보다 정확했어요(정확도 74% → 97%, 3명 예비 결과).
 3. **상체 기울임도 거북목:** 머리만 나오든, 허리만 숙이든, 둘 다든 상태는 전부 `FHP`(거북목)예요. 판정기는 `LEAN`을 내보내지 않아요.
-   - 📱 프론트: 고치지 않아도 동작해요. 원하면 범례·데모 버튼·리포트에서 `LEAN`(상체 기울임)을 빼세요(`Components.kt`, `SessionScreens.kt` 등). 안내 문구는 판정기가 원인에 맞게 "턱을 당기세요" / "허리를 펴세요"로 바꿔 줘요.
+   - 📱 프론트: 고치지 않아도 동작해요. 원하면 범례·데모 버튼·리포트에서 `LEAN`(상체 기울임)을 빼세요(`Components.kt`, `SessionScreens.kt` 등). 안내 문구는 "턱을 당기고 허리를 펴 보세요" 하나예요.
    - 🖥 백엔드: 고칠 것 없어요. enum의 `LEAN`은 남겨 둬도 값이 안 들어올 뿐이에요.
    - 결과보고서에는 "상체 기울임은 거북목으로 통합해 집계"라고 적어요.
 4. **개인 캘리브레이션:** 넣어요. 시작할 때 바른 자세로 5초 앉아서 그 사람 기준으로 판정해요.

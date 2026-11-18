@@ -38,7 +38,8 @@ tasks.test {
 // 프론트 폴더는 읽기만 합니다(build/ 아래로 복사해서 씀).
 // ---------------------------------------------------------------------------------------------
 val syncFrontendMain by tasks.registering(Sync::class) {
-    from(frontendCore.dir("src/main/kotlin")) { exclude("**/PostureEstimator.kt", "**/PostureFeatures.kt") }
+    // 프론트에 들어간 (옛 버전) AI 파일은 빼고, 이 저장소의 최신 AI 파일로 컴파일해요
+    from(frontendCore.dir("src/main/kotlin")) { exclude("**/PostureEstimator.kt", "**/PostureFeatures.kt", "**/PostureCalibration.kt") }
     from("src/main/kotlin")
     into(layout.buildDirectory.dir("compat/main"))
 }

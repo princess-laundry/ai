@@ -57,6 +57,9 @@ class Features:
     """어깨→귀 벡터 각도 − 몸통 각도(도). 몸통 기준 목 꺾임. 앞쪽이 +."""
     length: float
     """어깨–골반 길이(픽셀)."""
+    axis_angle: float
+    """골반→귀 벡터와 수직선 사이 각도(도). 앞으로 기울면 +. **판정에 쓰는 값**(2026-11-18 팀 결정).
+    머리를 내밀어도, 허리를 숙여도 이 선이 앞으로 기울어서 둘 다 거북목으로 잡혀요."""
 
 
 def select_side(left: Optional[BodySide], right: Optional[BodySide]) -> tuple[Optional[BodySide], int]:
@@ -115,7 +118,8 @@ def compute_features(body: BodySide, facing: int) -> Optional[Features]:
     # 몸통 축 u=(tx,tu)/L 에 수직이면서 앞쪽을 향하는 단위벡터 n=(tu,-tx)/L
     head_ratio = (hx * tu - hu * tx) / (length * length)
     neck_angle = wrap_degrees(math.degrees(math.atan2(hx, hu)) - torso_angle)
-    return Features(head_ratio, torso_angle, neck_angle, length)
+    axis_angle = math.degrees(math.atan2(facing * (body.ear.x - body.hip.x), body.hip.y - body.ear.y))
+    return Features(head_ratio, torso_angle, neck_angle, length, axis_angle)
 
 
 def wrap_degrees(value: float) -> float:

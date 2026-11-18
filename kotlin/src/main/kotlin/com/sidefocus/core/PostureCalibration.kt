@@ -4,10 +4,10 @@ import kotlinx.serialization.Serializable
 import kotlin.math.sqrt
 
 /**
- * 개인 기준 자세. 서버 user_settings의 calib_ratio(=headRatio), calib_angle(=torsoAngle)에 대응합니다.
+ * 개인 기준 자세: 바른 자세일 때 골반→귀 선 기울기(도). 서버 user_settings.calib_angle에 대응합니다(calib_ratio는 안 씀).
  */
 @Serializable
-data class Calibration(val headRatio: Double, val torsoAngle: Double)
+data class Calibration(val axisAngle: Double)
 
 enum class CalibrationStatus(val message: String) {
     PENDING("바른 자세로 편하게 앉아 5초만 기다려 주세요"),
@@ -37,35 +37,29 @@ data class CalibrationResult(
 class CalibrationCollector(private val thresholds: Thresholds = Thresholds()) {
     private var start: Long? = null
     private var total = 0
-    private val heads = ArrayList<Double>()
-    private val torsos = ArrayList<Double>()
+    private val axes = ArrayList<Double>()
     private var result: CalibrationResult? = null
 
     fun add(timestampMs: Long, feedback: PoseFeedback): CalibrationResult {
         result?.let { return it }
         val begin = start ?: timestampMs.also { start = it }
         total++
-        val head = feedback.headRatio
-        val torso = feedback.leanDegrees
-        if (head != null && torso != null && !feedback.needsReset) {
-            heads.add(head)
-            torsos.add(torso)
-        }
+        val axis = feedback.leanDegrees
+        if (axis != null && !feedback.needsReset) axes.add(axis)
         val elapsed = timestampMs - begin
         if (elapsed < CALIBRATION_MS) return CalibrationResult(CalibrationStatus.PENDING, elapsed.toDouble() / CALIBRATION_MS)
         return finish().also { result = it }
     }
 
     private fun finish(): CalibrationResult {
-        val valid = heads.size
+        val valid = axes.size
         if (valid < MIN_VALID_FRAMES || valid * 100 < MIN_VALID_PERCENT * total)
             return CalibrationResult(CalibrationStatus.NOT_VISIBLE, 1.0)
-        if (std(heads) > MAX_HEAD_STD || std(torsos) > MAX_TORSO_STD)
+        if (std(axes) > MAX_AXIS_STD)
             return CalibrationResult(CalibrationStatus.MOVING, 1.0)
-        val calibration = Calibration(PostureFeatures.upperMedian(heads), PostureFeatures.upperMedian(torsos))
+        val calibration = Calibration(PostureFeatures.upperMedian(axes))
         // 절대 임계값만으로 막으면 평소 자세가 기준선 근처인 사람은 캘리브레이션을 못 하므로 Δ만큼 여유를 둡니다.
-        if (calibration.headRatio > thresholds.headRatio + thresholds.headDelta ||
-            calibration.torsoAngle > thresholds.leanDegrees + thresholds.leanDeltaDegrees)
+        if (calibration.axisAngle > thresholds.leanDegrees + thresholds.leanDeltaDegrees)
             return CalibrationResult(CalibrationStatus.NOT_UPRIGHT, 1.0, calibration)
         return CalibrationResult(CalibrationStatus.DONE, 1.0, calibration)
     }
@@ -83,7 +77,6 @@ class CalibrationCollector(private val thresholds: Thresholds = Thresholds()) {
         const val CALIBRATION_MS = 5_000L
         const val MIN_VALID_PERCENT = 80
         const val MIN_VALID_FRAMES = 5
-        const val MAX_HEAD_STD = 0.05
-        const val MAX_TORSO_STD = 4.0
+        const val MAX_AXIS_STD = 4.0
     }
 }
