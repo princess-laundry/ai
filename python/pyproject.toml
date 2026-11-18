@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "posture-ai"
+version = "0.1.0"
+description = "측면 자세 인식 기반 집중 관리 앱 - AI 파트 (PC 분석 도구)"
+requires-python = ">=3.10"
+
+[project.scripts]
+posture-ai = "posture_ai.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
