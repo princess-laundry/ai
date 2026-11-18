@@ -103,7 +103,9 @@ def test_brief_movement_is_ignored():
 def test_lean_and_head_are_independent_attributes():
     est = PostureEstimator()
     result = run(est, steady(16, torso_deg=30))
-    assert result.state == LEAN and result.head_forward is False
+    # 상태는 거북목으로 통합하지만, 속성은 따로 남아요
+    assert result.state == FHP and result.head_forward is False and result.torso_lean
+    assert result.state != LEAN
     est = PostureEstimator()
     result = run(est, steady(16, torso_deg=30, head_ratio=0.5))
     assert result.state == FHP and result.head_forward and result.torso_lean

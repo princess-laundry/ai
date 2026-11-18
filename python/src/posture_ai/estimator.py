@@ -214,7 +214,8 @@ class PostureEstimator:
             total = len(self._window)
             self._head = self._decide(self._head, sum(1 for e in self._window if e[1]), total)
             self._lean = self._decide(self._lean, sum(1 for e in self._window if e[2]), total)
-            self.current = FHP if self._head else LEAN if self._lean else NORMAL
+            # 2026-11-18 팀 결정: 머리 전방·상체 기울임 모두 FHP(거북목)로 통합. LEAN은 내보내지 않음
+            self.current = FHP if (self._head or self._lean) else NORMAL
 
         return Feedback(
             state=self.current,
