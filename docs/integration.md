@@ -55,7 +55,10 @@ val frame = CameraFrame(PoseObservation(now, landmarks != null, side(7, 11, 23),
 - **부호는 기기마다 확인해 주세요.** 폰을 10° 기울인 채 똑바로 앉았을 때 `leanDegrees`가 0 근처로 유지되면 맞아요.
 - 값을 넘기지 않으면 보정하지 않아요(기존과 같음).
 
-### 5. 개인 캘리브레이션 (넣기로 확정)
+### 5. 개인 캘리브레이션 (지금은 쓰지 않음 · 화면 만들 필요 없음)
+
+**2026-11-18 결정: 지금은 앱에서 쓰지 않아요.** 3명·4회 촬영 데이터에서 같은 기준(11°)이 정확도 96.5%, 개인 기준이 77%였어요. 바른 자세에서도 기울기가 0~14°로 흔들려서 5초 기준값이 평소 자세를 대표하지 못했어요. 코드는 남겨 두고, 테스트 인원이 늘면 분석 리포트에서 다시 비교해요.
+아래는 나중에 다시 켤 때를 위한 사용법이에요.
 
 사람마다 평소 앉는 자세가 달라서, 절대 기준만 쓰면 원래 머리가 앞에 있는 사람은 계속 경고를 받아요. 시작할 때 바른 자세로 5초 앉으면 그 자세를 기준으로 판정해요. 합성 데이터에서는 정확도가 81.7%에서 88.0%로 올랐지만 실측은 아니에요.
 
@@ -85,6 +88,15 @@ else if (result.status == CalibrationStatus.DONE) {
 
 - 기본 판정에는 스키마 변경이 **필요 없어요.** `t2_angle`이 골반→귀 선 기울기 임계값(도)이고, `t1_ratio`는 판정에 안 써요(NOT NULL이라 아무 값이나 그대로 두면 돼요).
 - 실험 데이터로 `python -m posture_ai analyze`를 돌리면 `outputs/real/thresholds.sql`이 나와요. 새 버전 행을 넣고 활성 버전을 바꾸는 SQL이에요(기존 버전은 수정하지 않음).
+- **지금 등록할 v2 (2026-11-18, 3명·4회 촬영):** `t2_angle` = 11.0. `t1_ratio`는 판정에 안 써서 0.35를 그대로 넣어요.
+  ```sql
+  BEGIN;
+  INSERT INTO threshold_configs (version, t1_ratio, t2_angle, stable_sec, analysis_fps, is_active)
+  VALUES (2, 0.35, 11.0, 2.0, 5, false);
+  UPDATE threshold_configs SET is_active = false WHERE is_active;
+  UPDATE threshold_configs SET is_active = true WHERE version = 2;
+  COMMIT;
+  ```
   ```sql
   BEGIN;
   INSERT INTO threshold_configs (version, t1_ratio, t2_angle, stable_sec, analysis_fps, is_active)
@@ -96,7 +108,10 @@ else if (result.status == CalibrationStatus.DONE) {
 - `POST /admin/configs`가 생기면 같은 JSON(`thresholds.json`)을 그대로 보내면 돼요.
 - 프론트가 새 판정기로 교체하는 시점과 v2 활성화 시점을 맞춰 주세요. 세션마다 `threshold_version`이 저장되니, 버전별로 전후 비교도 할 수 있어요.
 
-### 개인 캘리브레이션 지원 (넣기로 확정, F8과 연결)
+### 개인 캘리브레이션 지원 (지금은 필요 없음, F8과 연결)
+
+캘리브레이션을 앱에서 쓰지 않기로 해서(2026-11-18) 아래 작업은 **당분간 안 해도 돼요.**
+
 - **기준값 저장:** `user_settings.calib_angle` = `Calibration.axisAngle`(바른 자세의 골반→귀 기울기). `calib_ratio`는 안 써요. 테이블은 이미 있어요. 기획서의 `GET/PUT /users/me/settings`가 구현되면 앱이 백업·복원할 수 있어요.
 - **Δ 임계값 (필요):** 캘리브레이션했을 때 쓰는 임계값 `t2_delta` **하나**만 `threshold_configs`에 nullable REAL 컬럼으로 추가하고 `/config` 응답에 넣어 주세요(V3 마이그레이션). 값이 없으면 앱은 기본값(9.5°)을 써요. `t1_delta`는 필요 없어졌어요.
   ```sql
@@ -113,7 +128,8 @@ else if (result.status == CalibrationStatus.DONE) {
    - 📱 프론트: 고치지 않아도 동작해요. 원하면 범례·데모 버튼·리포트에서 `LEAN`(상체 기울임)을 빼세요(`Components.kt`, `SessionScreens.kt` 등). 안내 문구는 "턱을 당기고 허리를 펴 보세요" 하나예요.
    - 🖥 백엔드: 고칠 것 없어요. enum의 `LEAN`은 남겨 둬도 값이 안 들어올 뿐이에요.
    - 결과보고서에는 "상체 기울임은 거북목으로 통합해 집계"라고 적어요.
-4. **개인 캘리브레이션:** 넣어요. 시작할 때 바른 자세로 5초 앉아서 그 사람 기준으로 판정해요.
+4. **개인 캘리브레이션:** ~~넣어요~~ → **지금은 쓰지 않아요**(같은 날 데이터 분석 후 변경). **2026-11-18 결정: 지금은 앱에서 쓰지 않아요.** 3명·4회 촬영 데이터에서 같은 기준(11°)이 정확도 96.5%, 개인 기준이 77%였어요. 바른 자세에서도 기울기가 0~14°로 흔들려서 5초 기준값이 평소 자세를 대표하지 못했어요. 코드는 남겨 두고, 테스트 인원이 늘면 분석 리포트에서 다시 비교해요.
+5. **서버 기준값 v2:** `t2_angle` = 11°(골반→귀 기울기). 앱 시험용 임시값이고, 테스트 인원이 늘면 다시 정해요. SQL은 아래 백엔드 절에 있어요.
 
 ## 아직 미정
 
