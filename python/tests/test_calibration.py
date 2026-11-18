@@ -41,7 +41,7 @@ def test_calibration_records_head_pitch_and_judges_bowing_relative_to_it():
 
 
 def test_calibration_lets_slouched_baseline_read_as_normal():
-    usual = body(head_ratio=0.30, torso_deg=10.0)   # 기울기 약 21.9°: 절대 기준(13°)이면 늘 거북목, 캘리브레이션 한도(13°+9.5°) 안
+    usual = body(head_ratio=0.30, torso_deg=10.0)   # 기울기 약 21.9°: 절대 기준(15°)이면 늘 거북목, 캘리브레이션 한도(15°+9.5°) 안
     result = calibrate(lambda t: observe(t, usual))
     assert result.status == DONE
     assert abs(result.calibration.axis_angle - (10 + math.degrees(math.atan2(0.30, 1.42)))) < 1e-9
@@ -55,7 +55,7 @@ def test_calibration_lets_slouched_baseline_read_as_normal():
 def test_calibration_failures():
     assert calibrate(lambda t: observe(t, body(torso_deg=0 if t // 1000 % 2 == 0 else 25))).status == MOVING
     assert calibrate(lambda t: Observation(t, False)).status == NOT_VISIBLE
-    assert calibrate(lambda t: observe(t, body(torso_deg=35))).status == NOT_UPRIGHT   # 35° > 13° + 9.5°
+    assert calibrate(lambda t: observe(t, body(torso_deg=35))).status == NOT_UPRIGHT   # 35° > 15° + 9.5°
     assert calibrate(lambda t: observe_pitch(t, body(), 70.0)).status == NOT_UPRIGHT   # 고개 70° > 42° + 15°
     assert calibrate(lambda t: observe_pitch(t, body(), 20.0 if t // 1000 % 2 == 0 else 45.0)).status == MOVING
 

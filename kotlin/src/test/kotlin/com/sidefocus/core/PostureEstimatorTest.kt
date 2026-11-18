@@ -173,7 +173,7 @@ class PostureEstimatorTest {
         }
         assertEquals(CalibrationStatus.MOVING, calibrate { t -> observe(t, body(torsoDeg = if (t / 1000 % 2 == 0L) 0.0 else 25.0)) })
         assertEquals(CalibrationStatus.NOT_VISIBLE, calibrate { t -> PoseObservation(t, false) })
-        assertEquals(CalibrationStatus.NOT_UPRIGHT, calibrate { t -> observe(t, body(torsoDeg = 35.0)) })  // 35° > 13° + 9.5°
+        assertEquals(CalibrationStatus.NOT_UPRIGHT, calibrate { t -> observe(t, body(torsoDeg = 35.0)) })  // 35° > 15° + 9.5°
     }
 
     @Test fun `nonfinite landmarks cannot pass the setup gate`() {

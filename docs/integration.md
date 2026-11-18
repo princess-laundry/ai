@@ -17,6 +17,7 @@ AI 파트 결과물을 앱과 서버에 붙이는 방법이에요. **ai 저장�
 
 - `PostureStub.kt`는 복사하지 마세요. 프론트에는 `Session.kt`에 `Posture`가 이미 있어요.
 - `GoldenParityTest.kt`는 선택이에요. 복사해도 golden 폴더가 없으면 자동으로 건너뛰어요.
+- `PostureLatency.kt`(+ 테스트 `PostureLatencyTest.kt`)는 실기기 처리 지연 측정용이에요. 아래 7번을 보세요.
 - **공개 API는 그대로예요.** `PostureEstimator(thresholds).update(PoseObservation)`, `PoseFeedback.copy(...)`, `framed`, `SetupGate`를 그대로 쓰면 돼요. 앱 코드는 고치지 않아도 컴파일돼요.
 - **이미 PR #1 버전을 넣었다면(2026-11-18 프론트 PR #2):** 위 4개 파일을 최신 버전으로 다시 덮어쓰면 돼요. 판정 방식이 "골반→귀 선 기울기 하나"로 바뀌었고, 앱 코드(`CameraSurface`의 코 좌표 등)는 그대로 둬도 돼요.
 - 교체 전에 ai 저장소에서 `kotlin/gradlew verifyAgainstFrontend`를 돌리면, 프론트 core 소스·테스트와 함께 컴파일하고 테스트까지 해요(현재 통과).
@@ -83,6 +84,31 @@ else if (result.status == CalibrationStatus.DONE) {
 새 판정기는 머리 특징의 정의가 달라졌어요. 그래서 실험 데이터로 정한 **v2 임계값**을 서버에 등록한 뒤 교체하는 게 가장 좋아요. 지금 기본값(0.35 / 20°)과 서버 v1(0.25 / 20°)은 둘 다 실험 전 임시값이에요.
 
 ---
+
+### 7. 처리 지연 측정 (실기기 확인용)
+
+발표 목표 "판정 1회 처리 p95 ≤ 200ms"를 재는 도구예요. 프레임 분석 시작부터 판정기 결과가 나올 때까지(비트맵 변환 + MediaPipe + 판정기)를 재요.
+
+1. `kotlin/src/main/kotlin/com/sidefocus/core/PostureLatency.kt`를 `core/src/main/kotlin/com/sidefocus/core/`에 복사해요.
+2. `FocusViewModel.kt`에 두 줄을 넣어요. `frame.observation.timestampMs`가 `CameraSurface`에서 분석을 시작한 시각(`now`)이라 그대로 쓰면 돼요.
+   ```kotlin
+   private val latency = LatencyMeter()
+
+   fun frame(frame: CameraFrame) {
+       ...
+       feedback = estimator.update(frame.observation)
+       latency.add(SystemClock.elapsedRealtime() - frame.observation.timestampMs, frame.observation.timestampMs)  // 추가
+       ...
+   }
+   ```
+3. 세션이 끝날 때(또는 디버그 화면에서) 결과를 남겨요.
+   ```kotlin
+   Log.i("SideFocus", latency.summary().report())
+   latency.reset()
+   ```
+   Logcat 예: `처리 지연 n=1500 p50=62ms p95=118ms max=240ms 200ms 초과 3회 · 분석 5.0fps (목표 p95 ≤ 200ms: 통과)`
+4. 실기기에서 **10분 이상** 켜 두고 잰 p95를 AI 담당에게 알려 주세요. 평가 리포트에 `--device-p95`로 넣어요.
+   - 같은 세션에서 배터리 %도 시작·끝을 적어 두면 "1시간 배터리 ≤ 15%"도 계산할 수 있어요.
 
 ## 백엔드 (`threshold_configs`)
 

@@ -123,6 +123,23 @@ def cmd_analyze(args) -> None:
     _print_result(result, args.out)
 
 
+def cmd_evaluate(args) -> None:
+    """고정 기준값 평가(파일럿·본 테스트용). 기준값을 새로 고르지 않아요."""
+    from .assess import assess, load_thresholds, write_report
+    recordings = load_dataset(args.data)
+    if not recordings:
+        raise SystemExit("평가할 녹화가 없습니다. extract와 라벨링을 먼저 하세요.")
+    thresholds = load_thresholds(args.config, args.t2, args.pitch)
+    result = assess(recordings, thresholds, calibrate=args.calibrate, device_p95_ms=args.device_p95)
+    report = write_report(result, args.out)
+    print(f"기준값: 몸 기울기 {thresholds.lean_degrees}° · 고개 숙임 {thresholds.pitch_degrees}°"
+          + (" · 개인 기준 사용" if args.calibrate else ""))
+    for c in result.checks:
+        mark = "통과" if c.passed else ("미달" if c.passed is False else "판단 불가")
+        print(f"  {c.goal}: {c.value} → {mark}" + (f" ({c.note})" if c.note else ""))
+    print(f"리포트: {report}")
+
+
 def cmd_demo(args) -> None:
     from . import synthetic
     from .pipeline import analyze
@@ -206,6 +223,13 @@ def main(argv: list[str] | None = None) -> None:
     p = add("analyze", cmd_analyze, "실제 데이터: 샘플 → 임계값/SVM/RF 비교 → 앱 시뮬레이션 → 내보내기")
     p.add_argument("--out", type=Path, default=OUTPUTS / "real")
     p.add_argument("--version", type=int, default=2, help="서버에 등록할 threshold_configs 버전")
+    p = add("evaluate", cmd_evaluate, "고정 기준값 평가: 파일럿·본 테스트 영상으로 발표 목표 확인(기준값을 새로 고르지 않음)")
+    p.add_argument("--config", type=Path, help="기준값 JSON(서버 /config 형식, 예: analyze의 thresholds.json). 없으면 앱 기본값")
+    p.add_argument("--t2", type=float, help="몸 기울기 기준(도) 덮어쓰기")
+    p.add_argument("--pitch", type=float, help="고개 숙임 기준(도) 덮어쓰기")
+    p.add_argument("--calibrate", action="store_true", help="개인 기준(캘리브레이션)을 켜고 평가")
+    p.add_argument("--device-p95", type=float, help="실기기 LatencyMeter의 처리 지연 p95(ms)")
+    p.add_argument("--out", type=Path, default=OUTPUTS / "evaluation")
     p = add("demo", cmd_demo, "합성 데이터로 전체 파이프라인 시연(실제 성능 아님)")
     p.add_argument("--out", type=Path, default=OUTPUTS / "demo")
     p.add_argument("--version", type=int, default=2)

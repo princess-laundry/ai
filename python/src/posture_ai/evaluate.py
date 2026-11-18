@@ -81,9 +81,21 @@ class AppSimulation:
     latency_median_s: float
     latency_p95_s: float
     calibration_failures: int = 0
+    normal_recall: float = float("nan")
+    """바른 자세 프레임을 바른 자세로 본 비율(자세별 정확도)."""
+    fhp_recall: float = float("nan")
+    """거북목 프레임을 거북목으로 본 비율(자세별 정확도)."""
+    macro_f1: float = float("nan")
+    """프레임 단위 바른 자세/거북목 Macro F1. 확인 중(UNKNOWN)은 '거북목 아님'으로 셉니다."""
 
     def as_dict(self) -> dict:
         return asdict(self)
+
+
+def _recall(y_true: list[int], y_hit: list[bool], cls: int) -> float:
+    """그 자세 프레임 중 앱 상태가 정확히 그 자세였던 비율."""
+    hits = [h for t, h in zip(y_true, y_hit) if t == cls]
+    return float(np.mean(hits)) if hits else float("nan")
 
 
 def _expected_state(interval: Interval) -> str:
@@ -134,6 +146,9 @@ def simulate_app(runs: Iterable[tuple[Recording, Thresholds]], calibrate: bool =
     지연 = 이상 자세 구간 시작부터 해당 상태가 처음 나온 시각까지(2초 안정화 포함).
     """
     correct = total = alerts = false_alerts = events = missed = 0
+    y_true: list[int] = []
+    y_pred: list[int] = []
+    y_hit: list[bool] = []
     labeled_s = 0.0
     latencies: list[float] = []
     failures = 0
@@ -159,7 +174,12 @@ def simulate_app(runs: Iterable[tuple[Recording, Thresholds]], calibrate: bool =
             truth = label_at(rec.labels, t)
             if truth is not None:
                 total += 1
-                correct += int(fb.state == _expected_state(truth))
+                expected_state = _expected_state(truth)
+                correct += int(fb.state == expected_state)
+                if expected_state in (NORMAL, FHP):
+                    y_true.append(int(expected_state == FHP))
+                    y_pred.append(int(fb.state == FHP))
+                    y_hit.append(fb.state == expected_state)
             if fb.state == FHP and fb.state != previous:
                 alerts += 1
                 raw = label_at(rec.labels, t, 0.0)
@@ -182,6 +202,9 @@ def simulate_app(runs: Iterable[tuple[Recording, Thresholds]], calibrate: bool =
     return AppSimulation(
         frames=total,
         frame_accuracy=correct / total if total else float("nan"),
+        normal_recall=_recall(y_true, y_hit, 0),
+        fhp_recall=_recall(y_true, y_hit, 1),
+        macro_f1=float(f1_score(y_true, y_pred, average="macro", labels=[0, 1], zero_division=0)) if y_true else float("nan"),
         labeled_hours=hours,
         alerts=alerts,
         false_alerts=false_alerts,
