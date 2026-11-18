@@ -9,7 +9,7 @@ data class Thresholds(
     /** 서버 t1_ratio. 판정에는 쓰지 않음(서버·기존 코드 호환용). */
     val headRatio: Double = 0.35,
     /** 서버 t2_angle. 골반→귀 선 기울기 임계값(도). 1차 실험(3명) 기준 예비값. */
-    val leanDegrees: Double = 13.0,
+    val leanDegrees: Double = 15.0,
     val stableMs: Long = 2_000,
     val analysisFps: Int = 5,
     /** 서버 t2_delta. 캘리브레이션했을 때 기준 자세 대비 기울기 증가량 임계값(도). 1차 실험 기준 예비값. */

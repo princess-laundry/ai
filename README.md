@@ -62,6 +62,7 @@ cd python
 .venv\Scripts\python -m posture_ai visualize S1_R              # 스켈레톤·상태·라벨을 겹친 검수 영상
 .venv\Scripts\python -m posture_ai kappa A.csv B.csv           # 라벨러 일치도
 .venv\Scripts\python -m posture_ai analyze --version 2         # → outputs/real/report.md, thresholds.sql, model_*.onnx
+.venv\Scripts\python -m posture_ai evaluate --device-p95 118   # 파일럿·본 테스트: 기준값 고정 평가 → outputs/evaluation/evaluation.md
 ```
 
 `data/`와 `outputs/`는 git에 올라가지 않아요. 영상을 OneDrive 밖(예: `C:\posture-data`)에 두려면 명령마다 `--data C:\posture-data`를 붙여요. 실험 영상은 동의를 받은 뒤 팀 PC에만 보관하고, 프로젝트가 끝나면 삭제해요.
@@ -78,5 +79,6 @@ cd python
 
 - 실험 영상이 아직 없어서 **정확도·오탐·지연 수치는 측정 전**이에요. demo 리포트는 합성 데이터라 성능 근거가 될 수 없어요.
 - MediaPipe 추출은 실제 모델로 동작하는 것까지만 확인했어요(빈 화면 영상 테스트).
-- 기기 처리 지연(ms), 배터리, 발열은 실기기에서 따로 측정해야 해요.
+- 기기 처리 지연(ms)은 앱에 `LatencyMeter`(`kotlin/.../PostureLatency.kt`)를 붙여 실기기에서 재요. 배터리·발열도 실기기에서 따로 재요.
+- **외부 테스터(파일럿·본 테스트) 평가는 `evaluate`로 해요.** `analyze`는 기준값을 그 데이터로 다시 골라서 성능이 부풀려져요.
 - 앱 반영은 프론트 담당자가 [integration.md](docs/integration.md)를 따라 진행해요.

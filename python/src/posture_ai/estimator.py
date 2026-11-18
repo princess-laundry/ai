@@ -50,7 +50,7 @@ class Thresholds:
     version: int = 1
     head_ratio: float = 0.35
     """서버 t1_ratio. 판정에는 쓰지 않아요(서버·프론트 호환용으로 남겨 둠)."""
-    lean_degrees: float = 13.0
+    lean_degrees: float = 15.0
     """서버 t2_angle. 골반→귀 선 기울기 임계값(도). 1차 실험(3명) 기준 예비값."""
     stable_ms: int = 2000
     analysis_fps: int = 5

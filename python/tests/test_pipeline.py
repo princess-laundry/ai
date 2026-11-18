@@ -187,3 +187,22 @@ def test_mediapipe_extraction_runs_on_a_video(tmp_path):
     assert list(frame.columns) == COLUMNS
     assert 9 <= len(frame) <= 11            # 2초 × 5fps
     assert frame["person"].sum() == 0       # 빈 화면엔 사람이 없음
+
+
+def test_fixed_threshold_evaluation_reports_goals(tmp_path, small_dataset):
+    from posture_ai.assess import assess, load_thresholds, write_report
+    config = tmp_path / "thresholds.json"
+    config.write_text(json.dumps({"version": 2, "t1_ratio": 0.35, "t2_angle": 14.0, "stable_sec": 2.0, "analysis_fps": 5}))
+    thresholds = load_thresholds(config, pitch=45.0)
+    assert (thresholds.version, thresholds.lean_degrees, thresholds.pitch_degrees) == (2, 14.0, 45.0)
+    result = assess(small_dataset, thresholds, device_p95_ms=150.0)
+    goals = {c.goal: c for c in result.checks}
+    assert len(goals) == 4
+    assert goals["처리 지연 p95 ≤ 200ms"].passed is True
+    assert goals["미탐률 ≤ 20%"].passed is not None              # 합성 대본에는 거북목 구간이 있음
+    assert 0 <= result.overall.normal_recall <= 1 and 0 <= result.overall.fhp_recall <= 1
+    assert set(result.per_subject["subject"]) == {r.subject for r in small_dataset}
+    report = write_report(result, tmp_path / "eval")
+    text = report.read_text(encoding="utf-8")
+    assert "고정 기준값 평가" in text and "14.0°" in text and (tmp_path / "eval" / "evaluation.json").exists()
+    assert assess(small_dataset, thresholds, device_p95_ms=250.0).checks[-1].passed is False
