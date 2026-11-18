@@ -37,7 +37,9 @@ class GoldenParityTest {
         return Thresholds(
             t["version"]!!.jsonPrimitive.int, t["headRatio"]!!.jsonPrimitive.double,
             t["leanDegrees"]!!.jsonPrimitive.double, t["stableMs"]!!.jsonPrimitive.long, t["analysisFps"]!!.jsonPrimitive.int,
-            t.doubleOrNull("leanDeltaDegrees") ?: defaults.leanDeltaDegrees)
+            t.doubleOrNull("leanDeltaDegrees") ?: defaults.leanDeltaDegrees,
+            t.doubleOrNull("pitchDegrees") ?: defaults.pitchDegrees,
+            t.doubleOrNull("pitchDeltaDegrees") ?: defaults.pitchDeltaDegrees)
     }
 
     private fun observation(f: JsonObject) = PoseObservation(
@@ -64,6 +66,7 @@ class GoldenParityTest {
                 assertEquals(e["status"]!!.jsonPrimitive.content, result.status.name, "$where status")
                 assertClose(e.doubleOrNull("progress"), result.progress, "$where progress")
                 assertClose(e.doubleOrNull("axisAngle"), result.calibration?.axisAngle, "$where axisAngle")
+                assertClose(e.doubleOrNull("headPitch"), result.calibration?.headPitch, "$where headPitch")
                 if (result.finished) seen += result.status.name
             }
         }
@@ -76,7 +79,7 @@ class GoldenParityTest {
         for (file in files) {
             val root = read(file)
             val calibration = (root["calibration"] as? JsonObject)?.let {
-                Calibration(it["axisAngle"]!!.jsonPrimitive.double)
+                Calibration(it["axisAngle"]!!.jsonPrimitive.double, it.doubleOrNull("headPitch"))
             }
             val estimator = PostureEstimator(thresholds(root["thresholds"]!!.jsonObject), calibration)
             val frames = root["frames"]!!.jsonArray
@@ -94,6 +97,7 @@ class GoldenParityTest {
                 assertEquals(e.boolOrNull("calibrated") ?: false, result.calibrated, "$where calibrated")
                 assertClose(e.doubleOrNull("headRatio"), result.headRatio, "$where headRatio")
                 assertClose(e.doubleOrNull("axisAngle"), result.leanDegrees, "$where axisAngle")
+                assertClose(e.doubleOrNull("headPitch"), result.headPitch, "$where headPitch")
                 assertClose(e.doubleOrNull("torsoAngle"), result.torsoAngle, "$where torsoAngle")
                 assertClose(e.doubleOrNull("neckAngle"), result.neckAngle, "$where neckAngle")
             }

@@ -23,8 +23,13 @@ from .labels import Interval, TRANSITION_MARGIN_S, label_at
 from .landmarks import observations
 
 FEATURES = ("axis_angle", "head_ratio", "torso_angle", "neck_angle")
-ABS_COLUMNS = ["axis_mean", "axis_std", "head_mean", "head_std", "torso_mean", "torso_std", "neck_mean", "neck_std"]
-DELTA_COLUMNS = ["d_axis", "axis_std", "d_head", "head_std", "d_torso", "torso_std", "d_neck", "neck_std"]
+"""귀·어깨·골반으로 계산하는 값. 이게 없으면 그 프레임은 판정에 못 써요."""
+PITCH = "head_pitch"
+"""고개 숙임(귀→코). 코가 안 보이면 없어요(그 프레임은 기울기로만 판정)."""
+ABS_COLUMNS = ["axis_mean", "axis_std", "pitch_mean", "pitch_std", "head_mean", "head_std", "torso_mean", "torso_std",
+               "neck_mean", "neck_std"]
+DELTA_COLUMNS = ["d_axis", "axis_std", "d_pitch", "pitch_std", "d_head", "head_std", "d_torso", "torso_std",
+                 "d_neck", "neck_std"]
 CALIBRATION_S = 5.0
 MAX_MISSING = 0.2
 
@@ -63,6 +68,7 @@ def frame_features(landmarks: pd.DataFrame, thresholds: Optional[Thresholds] = N
         rows.append({
             "t_ms": obs.timestamp_ms,
             "axis_angle": fb.axis_angle if fb.axis_angle is not None else np.nan,
+            "head_pitch": fb.head_pitch if fb.head_pitch is not None else np.nan,
             "head_ratio": fb.head_ratio if fb.head_ratio is not None else np.nan,
             "torso_angle": fb.torso_angle if fb.torso_angle is not None else np.nan,
             "neck_angle": fb.neck_angle if fb.neck_angle is not None else np.nan,
@@ -81,7 +87,7 @@ def calibration(features: pd.DataFrame, labels: list[Interval]) -> Optional[Base
     앱처럼 5초 동안 잘 보이고(유효 80% 이상) 움직이지 않아야(기울기 표준편차 ≤ 4°) 해요.
     실패하면 앱에서 다시 시도하는 것처럼 1초 뒤에서 다시 찾아요.
     """
-    from .calibration import MAX_AXIS_STD, MIN_VALID_FRAMES, MIN_VALID_PERCENT
+    from .calibration import MAX_AXIS_STD, MAX_PITCH_STD, MIN_VALID_FRAMES, MIN_VALID_PERCENT
 
     t = features["t_ms"] / 1000.0
     for interval in sorted(labels, key=lambda i: i.start_s):
@@ -94,9 +100,14 @@ def calibration(features: pd.DataFrame, labels: list[Interval]) -> Optional[Base
             frames = features[(t >= start) & (t < end)]
             part = frames.dropna(subset=list(FEATURES))
             part = part[~part["needs_reset"]]
+            pitches = part[PITCH].dropna()
+            has_pitch = len(pitches) >= MIN_VALID_FRAMES
             if (len(part) >= MIN_VALID_FRAMES and len(part) * 100 >= MIN_VALID_PERCENT * len(frames)
-                    and float(np.std(part["axis_angle"])) <= MAX_AXIS_STD):
-                return {f: float(part[f].median()) for f in FEATURES}, (start, end)
+                    and float(np.std(part["axis_angle"])) <= MAX_AXIS_STD
+                    and (not has_pitch or float(np.std(pitches)) <= MAX_PITCH_STD)):
+                base = {f: float(part[f].median()) for f in FEATURES}
+                base[PITCH] = float(pitches.median()) if has_pitch else np.nan
+                return base, (start, end)
             start += 1.0
     return None
 
@@ -141,17 +152,20 @@ def make_windows(recording: Recording, window_s: float = 2.0, features: Optional
             "posture": lab.posture,
             "fhp": int(lab.posture == "FHP"),
             "axis_mean": valid["axis_angle"].mean(), "axis_std": valid["axis_angle"].std(ddof=0),
+            "pitch_mean": valid[PITCH].mean() if valid[PITCH].notna().any() else np.nan,
+            "pitch_std": valid[PITCH].std(ddof=0) if valid[PITCH].notna().any() else np.nan,
             "head_mean": valid["head_ratio"].mean(), "head_std": valid["head_ratio"].std(ddof=0),
             "torso_mean": valid["torso_angle"].mean(), "torso_std": valid["torso_angle"].std(ddof=0),
             "neck_mean": valid["neck_angle"].mean(), "neck_std": valid["neck_angle"].std(ddof=0),
         }
         if base is not None:
             row.update(d_axis=row["axis_mean"] - base["axis_angle"],
+                       d_pitch=row["pitch_mean"] - base[PITCH],
                        d_head=row["head_mean"] - base["head_ratio"],
                        d_torso=row["torso_mean"] - base["torso_angle"],
                        d_neck=row["neck_mean"] - base["neck_angle"])
         else:
-            row.update(d_axis=np.nan, d_head=np.nan, d_torso=np.nan, d_neck=np.nan)
+            row.update(d_axis=np.nan, d_pitch=np.nan, d_head=np.nan, d_torso=np.nan, d_neck=np.nan)
         rows.append(row)
     return pd.DataFrame(rows)
 

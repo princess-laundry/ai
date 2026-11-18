@@ -20,12 +20,16 @@ class PostureEstimatorTest {
         fun img(x: Double, y: Double) = Point(240 + facing * x, 520 - y, conf)
         return BodySide(img(ex, ey), img(sx, sy), img(0.0, 0.0))
     }
-    private fun nose(b: BodySide, facing: Int = 1) = Point(b.ear.x + facing * 40, b.ear.y, 0.9f)
-    private fun observe(time: Long, b: BodySide, facing: Int = 1) =
-        PoseObservation(time, true, right = if (facing > 0) b else null, left = if (facing < 0) b else null, nose = nose(b, facing))
-    private fun run(estimator: PostureEstimator, from: Long, to: Long, b: BodySide, facing: Int = 1): PoseFeedback {
+    /** 귀에서 40px 앞, 수평 아래로 pitch도 숙인 코. */
+    private fun nose(b: BodySide, facing: Int = 1, pitch: Double = 20.0): Point {
+        val p = Math.toRadians(pitch)
+        return Point(b.ear.x + facing * 40 * cos(p), b.ear.y + 40 * sin(p), 0.9f)
+    }
+    private fun observe(time: Long, b: BodySide, facing: Int = 1, pitch: Double = 20.0) =
+        PoseObservation(time, true, right = if (facing > 0) b else null, left = if (facing < 0) b else null, nose = nose(b, facing, pitch))
+    private fun run(estimator: PostureEstimator, from: Long, to: Long, b: BodySide, facing: Int = 1, pitch: Double = 20.0): PoseFeedback {
         var result = PoseFeedback()
-        for (time in from..to step 200) result = estimator.update(observe(time, b, facing))
+        for (time in from..to step 200) result = estimator.update(observe(time, b, facing, pitch))
         return result
     }
 
@@ -98,6 +102,22 @@ class PostureEstimatorTest {
 
     @Test fun `slight head offset stays normal`() {
         assertEquals(Posture.NORMAL, run(PostureEstimator(), 0, 3000, body(headRatio = 0.15)).state)
+    }
+
+    @Test fun `bowing the head with an upright back is FHP`() {
+        val result = run(PostureEstimator(), 0, 3000, body(), pitch = 55.0)   // 팀 결정: 고개만 숙여도 거북목
+        assertEquals(Posture.FHP, result.state)
+        assertEquals(55.0, result.headPitch!!, 1e-6)
+        assertTrue(result.leanDegrees!! < Thresholds().leanDegrees)
+        assertEquals(Posture.NORMAL, run(PostureEstimator(), 0, 3000, body(), pitch = 25.0).state)  // 화면 보는 정도는 통과
+    }
+
+    @Test fun `missing nose judges by body lean only`() {
+        val estimator = PostureEstimator()
+        var result = PoseFeedback()
+        for (time in 0L..3000L step 200) result = estimator.update(PoseObservation(time, true, right = body(torsoDeg = 30.0)))
+        assertEquals(Posture.FHP, result.state)
+        assertNull(result.headPitch)
     }
 
     @Test fun `leaning back is not leaning forward`() {

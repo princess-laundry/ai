@@ -57,6 +57,8 @@ class Subject:
     noise_px: float = 1.5
     dropout: float = 0.02         # 한 프레임에서 랜드마크가 흐려질 확률
     sway: float = 0.6             # 자세 안에서의 흔들림 크기 배율
+    pitch_neutral: float = 22.0   # 바른 자세 고개 숙임 각도(귀→코, 수평 아래로, 도) — 개인차
+    bow_shift: float = 28.0       # 거북목(머리 전방)일 때 더 숙이는 각도(도)
 
 
 def random_subject(name: str, rng: np.random.Generator, *, roll: bool = True) -> Subject:
@@ -72,6 +74,8 @@ def random_subject(name: str, rng: np.random.Generator, *, roll: bool = True) ->
         roll_deg=float(rng.normal(0.0, 3.0)) if roll else 0.0,
         noise_px=float(rng.uniform(1.0, 2.5)),
         dropout=float(rng.uniform(0.0, 0.04)),
+        pitch_neutral=float(rng.normal(22.0, 5.0)),
+        bow_shift=float(rng.uniform(15.0, 35.0)),
     )
 
 
@@ -90,10 +94,11 @@ def script_intervals(script: list[tuple[str, float]], repeats: int = 1) -> list[
     return intervals
 
 
-def _targets(subject: Subject, interval: Interval) -> tuple[float, float]:
+def _targets(subject: Subject, interval: Interval) -> tuple[float, float, float]:
     head = subject.head_neutral + (subject.head_shift if interval.head_forward else 0.0)
     torso = subject.torso_neutral + (subject.lean_shift if interval.torso_lean else 0.0)
-    return head, torso
+    pitch = subject.pitch_neutral + (subject.bow_shift if interval.head_forward else 0.0)
+    return head, torso, pitch
 
 
 def generate(
@@ -108,8 +113,8 @@ def generate(
     rng = np.random.default_rng(seed)
     end_s = max(i.end_s for i in intervals)
     rows: list[dict] = []
-    last: Optional[tuple[float, float]] = None   # 직전 프레임의 (head, torso), 흔들림 제외
-    start: Optional[tuple[float, float]] = None  # 현재 구간이 시작될 때의 값
+    last: Optional[tuple[float, ...]] = None   # 직전 프레임의 (head, torso, pitch), 흔들림 제외
+    start: Optional[tuple[float, ...]] = None  # 현재 구간이 시작될 때의 값
     current_index = -1
     change_at = 0.0
     hip_x = WIDTH / 2 - subject.facing * 30.0
@@ -129,18 +134,19 @@ def generate(
         target = _targets(subject, interval)
         if start is not None and t_s - change_at < transition_s:  # 부드러운 전환
             w = (t_s - change_at) / transition_s
-            base = (start[0] + (target[0] - start[0]) * w, start[1] + (target[1] - start[1]) * w)
+            base = tuple(a + (b - a) * w for a, b in zip(start, target))
         else:
             base = target
         last = base
         head = base[0] + subject.sway * 0.03 * math.sin(2 * math.pi * 0.13 * t_s + phase[0])
         torso = base[1] + subject.sway * 2.5 * math.sin(2 * math.pi * 0.09 * t_s + phase[1])
-        rows.append(_frame(subject, t_ms, head, torso, hip_x, hip_y, rng))
+        pitch = base[2] + subject.sway * 3.0 * math.sin(2 * math.pi * 0.11 * t_s + phase[0])
+        rows.append(_frame(subject, t_ms, head, torso, hip_x, hip_y, rng, pitch))
     return pd.DataFrame(rows, columns=COLUMNS)
 
 
 def _frame(subject: Subject, t_ms: int, head: float, torso: float, hip_x: float, hip_y: float,
-           rng: np.random.Generator) -> dict:
+           rng: np.random.Generator, pitch: float = 22.0) -> dict:
     L = subject.torso_px
     theta = math.radians(torso)
     u = (math.sin(theta), math.cos(theta))           # 몸통 축 (앞, 위)
@@ -149,7 +155,8 @@ def _frame(subject: Subject, t_ms: int, head: float, torso: float, hip_x: float,
     shoulder = (hip[0] + L * u[0], hip[1] + L * u[1])
     ear = (shoulder[0] + subject.neck_up * L * u[0] + head * L * n[0],
            shoulder[1] + subject.neck_up * L * u[1] + head * L * n[1])
-    nose = (ear[0] + 0.20 * L * n[0] - 0.02 * L * u[0], ear[1] + 0.20 * L * n[1] - 0.02 * L * u[1])
+    p = math.radians(pitch)                         # 귀→코 선이 수평 아래로 숙인 각도
+    nose = (ear[0] + 0.20 * L * math.cos(p), ear[1] - 0.20 * L * math.sin(p))
 
     def to_image(p: tuple[float, float], depth_dx: float = 0.0) -> tuple[float, float]:
         x = hip_x + subject.facing * (p[0] + depth_dx)

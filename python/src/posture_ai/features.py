@@ -122,6 +122,20 @@ def compute_features(body: BodySide, facing: int) -> Optional[Features]:
     return Features(head_ratio, torso_angle, neck_angle, length, axis_angle)
 
 
+def head_pitch(ear: Point, nose: Optional[Point], facing: int) -> Optional[float]:
+    """귀→코 선이 수평에서 아래로 숙인 각도(도). 고개를 숙이면 커져요. 코가 없거나 신뢰도가 낮으면 None.
+
+    골반→귀 기울기로는 '허리는 펴고 고개만 숙인 자세'가 잘 안 잡혀서 함께 봐요(2026-11-18 팀 결정).
+    """
+    if nose is None or nose.confidence < MIN_CONFIDENCE or not (math.isfinite(nose.x) and math.isfinite(nose.y)):
+        return None
+    forward = facing * (nose.x - ear.x)
+    down = nose.y - ear.y
+    if math.hypot(forward, down) < 1e-3:
+        return None
+    return math.degrees(math.atan2(down, forward))
+
+
 def wrap_degrees(value: float) -> float:
     """(-180, 180] 범위로 맞춥니다."""
     while value > 180.0:

@@ -29,8 +29,10 @@ def body(head_ratio=0.0, torso_deg=0.0, facing=1, length=200.0, hip=(240.0, 520.
     return BodySide(img(ear), img(sh), img((0.0, 0.0)))
 
 
-def nose_for(b: BodySide, facing=1):
-    return Point(b.ear.x + facing * 40, b.ear.y, 0.9)
+def nose_for(b: BodySide, facing=1, pitch=20.0):
+    """귀에서 40px 앞, 수평 아래로 pitch도 숙인 코."""
+    p = math.radians(pitch)
+    return Point(b.ear.x + facing * 40 * math.cos(p), b.ear.y + 40 * math.sin(p), 0.9)
 
 
 def run(est, frames, start=0, step=200):
@@ -40,9 +42,9 @@ def run(est, frames, start=0, step=200):
     return out
 
 
-def steady(n, **kw):
+def steady(n, pitch=20.0, **kw):
     b = body(**kw)
-    return [(b, nose_for(b, kw.get("facing", 1)))] * n
+    return [(b, nose_for(b, kw.get("facing", 1), pitch))] * n
 
 
 def test_features_recover_geometry_for_both_facings():
@@ -109,6 +111,33 @@ def test_one_axis_catches_head_forward_and_leaning():
         assert result.state == FHP and result.state != LEAN, kw
     assert run(PostureEstimator(), steady(16, torso_deg=-25)).state == NORMAL   # 뒤로 기대기는 바른 자세
     assert run(PostureEstimator(), steady(16, head_ratio=0.15)).state == NORMAL  # 살짝 내민 정도는 통과
+
+
+def test_bowing_head_with_upright_back_is_fhp():
+    # 팀 결정: 허리는 펴고 고개만 숙여도 거북목
+    result = run(PostureEstimator(), steady(16, pitch=55.0))
+    assert result.state == FHP and result.axis_angle < Thresholds().lean_degrees
+    assert result.head_pitch == pytest.approx(55.0)
+    assert run(PostureEstimator(), steady(16, pitch=25.0)).state == NORMAL   # 화면을 보는 정도는 통과
+
+
+def test_missing_nose_judges_by_axis_only():
+    b = body(torso_deg=30)
+    est = PostureEstimator()
+    result = None
+    for k in range(16):
+        result = est.update(Observation(k * 200, True, right=b, nose=None))
+    assert result.state == FHP and result.head_pitch is None
+
+
+def test_head_pitch_uses_facing_and_roll():
+    from posture_ai.features import head_pitch, rotate
+    for facing in (1, -1):
+        b = body(facing=facing)
+        assert head_pitch(b.ear, nose_for(b, facing, 50.0), facing) == pytest.approx(50.0)
+    b = body()
+    tilted_ear, tilted_nose = rotate(b.ear, -8.0), rotate(nose_for(b, 1, 30.0), -8.0)
+    assert head_pitch(rotate(tilted_ear, 8.0), rotate(tilted_nose, 8.0), 1) == pytest.approx(30.0)
 
 
 def test_missing_person_becomes_away_and_occluded_unknown():
